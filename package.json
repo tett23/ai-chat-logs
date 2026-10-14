@@ -1,0 +1,16 @@
+{
+  "name": "ai-chat-logs",
+  "version": "0.1.0",
+  "description": "Export Claude chat logs into SQLite and keep them synced",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "claude-log-sources": "src/cli/sources.ts",
+    "claude-log-import": "src/cli/import.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "sync": "sh bin/sync"
+  }
+}
