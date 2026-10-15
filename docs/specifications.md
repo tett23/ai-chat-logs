@@ -11,11 +11,17 @@ ai-chat-logs の現行の仕様をまとめる。
 
 | コマンド | 入力 | 出力 |
 |---|---|---|
-| `claude-log-sources`（`src/cli/sources.ts`） | なし | `<種類><タブ><絶対パス>` の行（パスの順） |
-| `claude-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
+| `claude-log-sources`（`src/cli/sources.ts`） | なし | Claude の取り込む対象の、`<種類><タブ><絶対パス>` の行（パスの順） |
+| `chat-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
 | `bin/sync` | なし | 上の2つを順に実行する。列挙に失敗したら取り込まない |
 
-`claude-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
+`chat-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
+
+### 種類と提供元
+
+種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code` と `claude-desktop`。
+列挙は提供元ごとのコマンド（いまは `claude-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
+提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、必要なら `messages` ビューの `UNION ALL` の枝を足す。表は変えない。
 
 ### 取り込む対象
 
@@ -33,6 +39,12 @@ ai-chat-logs の現行の仕様をまとめる。
 - 前回までに取り込んだバイト数（`consumed_bytes`）より後ろを読み、最後の改行までの行を取り込む。最後の改行より後ろは書きかけとして次回に回す。
 - 64MiB ずつ区切って読む。1行が区切りより長ければ、区切りを広げる。
 - 各行は改行と末尾の `\r` を除いた文字列のまま `records.raw` に入れる。空の行は入れないが、行番号（1始まり）は数える。JSON として正しくない行も入れる。
+- 種類ごとの抽出の関数で、`records` の `type`、`uuid`、`session_id`、`timestamp` を埋める。JSON として正しくない行、オブジェクトでない行、型の合わない値は NULL。
+
+| 種類 | `type` | `uuid` | `session_id` | `timestamp` |
+|---|---|---|---|---|
+| `claude-code/transcript` | `$.type` | `$.uuid` | `$.sessionId` | `$.timestamp`（文字列のまま） |
+| `claude-code/history` | NULL | NULL | `$.sessionId` | `$.timestamp`（ミリ秒）を ISO 8601（UTC、`Z`）にしたもの |
 - ファイルが `consumed_bytes` より短くなったか、先頭 `min(4096, consumed_bytes)` バイトの SHA-256 が変わったら、書きかえとみなし、`generation` を上げた `sources` の行を作って先頭から読む。前の版の行は残す。
 - 1ファイルを1つのトランザクションで取り込む。
 
@@ -46,18 +58,18 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ### データベース
 
-- 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude.sqlite` の順（環境変数は `.env` から読んだものを含む）。
+- 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
 - スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は1）。
 
 | 表・ビュー | 中身 |
 |---|---|
-| `sources` | 取り込んだファイル（種類、パス、`generation`、取り込み済みのバイト数と行数、先頭のハッシュ、大きさ、更新時刻、最初と最後に見た時刻、見つからなくなった時刻） |
-| `records` | JSONL の1行（`raw`）。生成列 `type`、`uuid`、`session_id`、`timestamp` |
+| `sources` | 取り込んだファイル（種類、提供元（種類の `/` より前の生成列）、パス、`generation`、取り込み済みのバイト数と行数、先頭のハッシュ、大きさ、更新時刻、最初と最後に見た時刻、見つからなくなった時刻） |
+| `records` | JSONL の1行（`raw`）と、抽出した `type`、`uuid`、`session_id`、`timestamp` |
 | `blobs` | ファイルの中身（SHA-256 で重複を除く） |
 | `file_versions` | ファイルごとの種類の、パスと中身の版 |
 | `runs` | 実行ごとの開始・終了の時刻、件数、失敗（JSON の配列） |
-| `messages`（ビュー） | `claude-code/transcript` の `user` と `assistant` のレコード（セッションID、`uuid`、親の `uuid`、時刻、役割、モデル、サイドチェーンか、`cwd`、内容、元のパス） |
+| `messages`（ビュー） | 会話のメッセージ。いまは `claude-code/transcript` の `user` と `assistant` のレコード（提供元、セッションID、`uuid`、親の `uuid`、時刻、役割、モデル、サイドチェーンか、`cwd`、内容、元のパス） |
 
 ## 定期実行
 
@@ -76,7 +88,7 @@ ai-chat-logs の現行の仕様をまとめる。
 - `AI_CHAT_LOGS_ENV_FILE` があればそのファイルを、無ければリポジトリのルートの `.env` を読む。ファイルが無ければ何もしない。
 - 既にある環境変数は上書きしない。
 - 実行したディレクトリの `.env` は読まない。CLI は `bun --no-env-file` で動かし、Bun の自動の読み込みを止める。
-- CLI（`claude-log-sources`、`claude-log-import`）は起動の直後に、`ecosystem.config.cjs` は `cron_restart` を決める前に読む。
+- CLI（`claude-log-sources`、`chat-log-import`）は起動の直後に、`ecosystem.config.cjs` は `cron_restart` を決める前に読む。
 - 名前の制限は無い。このツールが読むのは `AI_CHAT_LOGS_DB`、`XDG_DATA_HOME`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CRON`。
 - 設定できる変数は `.env.example` にコメントで示す。`.env` は git の管理外。
 

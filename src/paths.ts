@@ -12,4 +12,4 @@ export const claudeConfigDir = (env: Env): string => env.CLAUDE_CONFIG_DIR || jo
 export const desktopAppDir = (env: Env): string => join(home(env), "Library/Application Support/Claude");
 
 export const defaultDatabasePath = (env: Env): string =>
-  env.AI_CHAT_LOGS_DB || join(env.XDG_DATA_HOME || join(home(env), ".local/share"), "ai-chat-logs/claude.sqlite");
+  env.AI_CHAT_LOGS_DB || join(env.XDG_DATA_HOME || join(home(env), ".local/share"), "ai-chat-logs/logs.sqlite");

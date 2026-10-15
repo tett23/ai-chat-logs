@@ -1,6 +1,7 @@
 # ai-chat-logs
 
-Claude のチャット履歴を SQLite に書き出し、定期的に保存するためのツール群。
+AI のチャット履歴を SQLite に書き出し、定期的に保存するためのツール群。
+いまは Claude（Claude Code とデスクトップアプリの Code タブ）の履歴に対応する。スキーマは、Claude 以外の AI の履歴も入れられる形にしてある。
 
 Claude Code は、既定で30日を過ぎたセッションの履歴を削除する。
 このツールは、手元の履歴（`~/.claude/projects` の JSONL など）を差分で SQLite に取り込み、元のファイルが消えても取り込み済みの行を残す。
@@ -25,7 +26,7 @@ bun src/cli/sources.ts                             # "<種類>\t<絶対パス>" 
 bun src/cli/sources.ts | bun src/cli/import.ts     # 標準入力の対象を差分で取り込む
 ```
 
-`claude-log-import`（`src/cli/import.ts`）のオプション：
+`chat-log-import`（`src/cli/import.ts`）のオプション：
 
 | オプション | 意味 |
 |---|---|
@@ -51,7 +52,7 @@ pm2 start ecosystem.config.cjs
 
 | 変数 | 意味 | 既定 |
 |---|---|---|
-| `AI_CHAT_LOGS_DB` | データベースのパス | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude.sqlite` |
+| `AI_CHAT_LOGS_DB` | データベースのパス | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` |
 | `XDG_DATA_HOME` | データベースの既定の場所の基準 | `~/.local/share` |
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ | `~/.claude` |
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 * * * *` |
@@ -76,7 +77,7 @@ cp .env.example .env   # 使う行のコメントを外して値を書く
 ### データベースを読む
 
 ```sh
-sqlite3 ~/.local/share/ai-chat-logs/claude.sqlite \
+sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
   "SELECT timestamp, role, substr(content, 1, 80) FROM messages WHERE session_id = '<セッションID>' ORDER BY timestamp"
 ```
 

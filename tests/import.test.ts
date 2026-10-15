@@ -166,10 +166,10 @@ describe("messages view", () => {
     const path = writeFile(join(dir, "a.jsonl"), jsonl(userRecord(1), { type: "mode", sessionId: "s1" }, assistant));
     const history = writeFile(join(dir, "history.jsonl"), jsonl({ type: "user", display: "x" }));
     importSources(db, [transcript(path), { kind: "claude-code/history", path: history }], {});
-    const rows = db.query("SELECT session_id, uuid, parent_uuid, type, timestamp, role, model FROM messages ORDER BY timestamp").all();
+    const rows = db.query("SELECT provider, session_id, uuid, parent_uuid, type, timestamp, role, model FROM messages ORDER BY timestamp").all();
     expect(rows).toEqual([
-      { session_id: "s1", uuid: "u1", parent_uuid: null, type: "user", timestamp: "2026-10-14T00:00:01Z", role: "user", model: null },
-      { session_id: "s1", uuid: "a1", parent_uuid: "u1", type: "assistant", timestamp: "2026-10-14T00:00:02Z", role: "assistant", model: "claude-opus-5-5" },
+      { provider: "claude-code", session_id: "s1", uuid: "u1", parent_uuid: null, type: "user", timestamp: "2026-10-14T00:00:01Z", role: "user", model: null },
+      { provider: "claude-code", session_id: "s1", uuid: "a1", parent_uuid: "u1", type: "assistant", timestamp: "2026-10-14T00:00:02Z", role: "assistant", model: "claude-opus-5-5" },
     ]);
   });
 });
@@ -201,7 +201,7 @@ describe("database", () => {
   });
 });
 
-describe("claude-log-import CLI", () => {
+describe("chat-log-import CLI", () => {
   test("continues after an unreadable file, records the error and exits 1", () => {
     const dir = tempDir();
     const dbPath = join(dir, "c.sqlite");
@@ -236,7 +236,7 @@ describe("claude-log-import CLI", () => {
     const env = isolatedEnv({ HOME: dir, XDG_DATA_HOME: join(dir, "xdg") });
     const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts")], { stdin: Buffer.from(`claude-code/transcript\t${good}\n`), env });
     expect(result.exitCode).toBe(0);
-    expect(statSync(join(dir, "xdg/ai-chat-logs/claude.sqlite")).isFile()).toBe(true);
+    expect(statSync(join(dir, "xdg/ai-chat-logs/logs.sqlite")).isFile()).toBe(true);
   });
 
   test("reports unknown kinds as errors", () => {
@@ -264,7 +264,7 @@ describe("importSources: chunked reads", () => {
   });
 });
 
-describe("claude-log-import CLI with an env file", () => {
+describe("chat-log-import CLI with an env file", () => {
   const run = (env: Record<string, string>, input: string) =>
     Bun.spawnSync([join(repoRoot, "src/cli/import.ts")], { stdin: Buffer.from(input), env: isolatedEnv(env) });
 
@@ -292,6 +292,30 @@ describe("claude-log-import CLI with an env file", () => {
     const result = run({ HOME: dir, AI_CHAT_LOGS_ENV_FILE: envFile }, "");
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain(`${envFile}: line 1`);
+  });
+});
+
+describe("provider-independent schema", () => {
+  test("derives the provider from the kind", () => {
+    const { dir, db } = setup();
+    const t = writeFile(join(dir, "a.jsonl"), jsonl({ a: 1 }));
+    const f = writeFile(join(dir, "s.json"), "{}");
+    importSources(db, [transcript(t), { kind: "claude-desktop/session", path: f }], {});
+    expect(db.query("SELECT kind, provider FROM sources ORDER BY kind").all()).toEqual([
+      { kind: "claude-code/transcript", provider: "claude-code" },
+      { kind: "claude-desktop/session", provider: "claude-desktop" },
+    ]);
+  });
+
+  test("fills extracted fields of history lines", () => {
+    const { dir, db } = setup();
+    const path = writeFile(join(dir, "history.jsonl"), jsonl({ display: "x", timestamp: 1780525414056, sessionId: "s9" }));
+    importSources(db, [{ kind: "claude-code/history", path }], {});
+    expect(db.query("SELECT type, session_id, timestamp FROM records").get()).toEqual({
+      type: null,
+      session_id: "s9",
+      timestamp: new Date(1780525414056).toISOString(),
+    });
   });
 });
 

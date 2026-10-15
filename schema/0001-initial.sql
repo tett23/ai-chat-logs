@@ -2,6 +2,7 @@
 CREATE TABLE sources (
   id             INTEGER PRIMARY KEY,
   kind           TEXT    NOT NULL,
+  provider       TEXT GENERATED ALWAYS AS (substr(kind, 1, instr(kind, '/') - 1)) VIRTUAL,
   path           TEXT    NOT NULL,
   generation     INTEGER NOT NULL DEFAULT 0,
   consumed_bytes INTEGER NOT NULL DEFAULT 0,
@@ -14,16 +15,18 @@ CREATE TABLE sources (
   missing_since  TEXT,
   UNIQUE (path, generation)
 );
+CREATE INDEX sources_provider ON sources (provider);
 
 CREATE TABLE records (
   source_id   INTEGER NOT NULL REFERENCES sources(id),
   line_no     INTEGER NOT NULL,
   raw         TEXT    NOT NULL,
   imported_at TEXT    NOT NULL,
-  type        TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(raw) THEN raw ->> '$.type' END) VIRTUAL,
-  uuid        TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(raw) THEN raw ->> '$.uuid' END) VIRTUAL,
-  session_id  TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(raw) THEN raw ->> '$.sessionId' END) VIRTUAL,
-  timestamp   TEXT GENERATED ALWAYS AS (CASE WHEN json_valid(raw) THEN raw ->> '$.timestamp' END) VIRTUAL,
+  -- filled by the per-kind extractor (src/extract.ts)
+  type        TEXT,
+  uuid        TEXT,
+  session_id  TEXT,
+  timestamp   TEXT,
   PRIMARY KEY (source_id, line_no)
 );
 CREATE INDEX records_session ON records (session_id, timestamp);
@@ -52,8 +55,9 @@ CREATE TABLE runs (
   errors        TEXT
 );
 
+-- Add a UNION ALL branch with the same columns for each new provider.
 CREATE VIEW messages AS
-SELECT r.session_id, r.uuid,
+SELECT s.provider, r.session_id, r.uuid,
        r.raw ->> '$.parentUuid'     AS parent_uuid,
        r.type,
        r.timestamp,

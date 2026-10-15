@@ -1,7 +1,8 @@
 import type { Database } from "bun:sqlite";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { detectChange } from "./change.ts";
-import { isFileKind, isLineKind } from "./kinds.ts";
+import { extractFields } from "./extract.ts";
+import { isFileKind, isLineKind, type LineKind } from "./kinds.ts";
 import { splitCompleteLines } from "./lines.ts";
 
 export type SourceEntry = { kind: string; path: string };
@@ -89,7 +90,7 @@ function* readChunks(path: string, start: number, size: number, chunkBytes: numb
 }
 
 // docs/adr/0001: import complete lines appended since the last run; a rewritten file starts a new generation.
-const importLines = (db: Database, kind: string, path: string, now: string, chunkBytes: number): number =>
+const importLines = (db: Database, kind: LineKind, path: string, now: string, chunkBytes: number): number =>
   db
     .transaction(() => {
       const { size, mtimeMs } = statSync(path);
@@ -103,11 +104,16 @@ const importLines = (db: Database, kind: string, path: string, now: string, chun
       markSeen(db, path, now);
       if (change === "unchanged") return 0;
       const source = change === "rewritten" ? insertSource(db, kind, path, stored.generation + 1, now) : stored;
-      const insert = db.query("INSERT INTO records (source_id, line_no, raw, imported_at) VALUES (?, ?, ?, ?)");
+      const insert = db.query(
+        "INSERT INTO records (source_id, line_no, raw, imported_at, type, uuid, session_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      );
       const totals = readChunks(path, source.consumed_bytes, size, chunkBytes).reduce(
         (acc, { lines, consumed }) => {
           const rows = lines.map((raw, i) => ({ raw, lineNo: acc.lines + i + 1 })).filter(({ raw }) => raw !== "");
-          rows.forEach(({ raw, lineNo }) => insert.run(source.id, lineNo, raw, now));
+          rows.forEach(({ raw, lineNo }) => {
+            const f = extractFields(kind, raw);
+            insert.run(source.id, lineNo, raw, now, f.type, f.uuid, f.sessionId, f.timestamp);
+          });
           return { bytes: acc.bytes + consumed, lines: acc.lines + lines.length, added: acc.added + rows.length };
         },
         { bytes: source.consumed_bytes, lines: source.consumed_lines, added: 0 },
