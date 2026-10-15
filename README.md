@@ -147,7 +147,7 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 cd gui
 bun install
 bun run tauri dev          # 開発用に起動する
-bun run tauri build        # アプリをビルドする（src-tauri/target/release/bundle/）
+bun run tauri build        # アプリをビルドする（src-tauri/target/release/bundle/macos/AI Chat Logs.app）
 ```
 
 - 必要なもの：Rust（stable）と、Tauri の前提のライブラリ（macOS では Xcode の Command Line Tools）。
