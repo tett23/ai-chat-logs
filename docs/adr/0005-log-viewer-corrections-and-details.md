@@ -1,6 +1,6 @@
 # ADR 0005: 履歴の GUI の訂正と細部
 
-ステータス: 採択
+ステータス: 採択→GUI での設定ファイルと .env の読み込みは[ADR 0007](0007-settings-and-setup-screen.md)
 
 ## 文脈
 

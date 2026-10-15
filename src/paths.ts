@@ -9,7 +9,8 @@ const home = (env: Env): string => {
 
 export const claudeConfigDir = (env: Env): string => env.CLAUDE_CONFIG_DIR || join(home(env), ".claude");
 
-export const desktopAppDir = (env: Env): string => join(home(env), "Library/Application Support/Claude");
+export const desktopAppDir = (env: Env): string =>
+  env.AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR || join(home(env), "Library/Application Support/Claude");
 
 const dataHome = (env: Env): string => env.XDG_DATA_HOME || join(home(env), ".local/share");
 

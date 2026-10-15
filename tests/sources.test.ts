@@ -91,4 +91,57 @@ describe("claude-log-sources", () => {
     const envFile = writeFile(join(home, "my.env"), `AI_CHAT_LOGS_CLAUDE_AI_DIR=${join(home, "elsewhere")}\n`);
     expect(runSources({ HOME: home, AI_CHAT_LOGS_ENV_FILE: envFile }).stdout.toString()).toBe(`claude-ai/conversation\t${fromEnv}\n`);
   });
+
+  describe("config file (docs/adr/0007)", () => {
+    const setupConfig = () => {
+      const home = tempDir();
+      const fromConfig = writeFile(join(home, "config-dir/history.jsonl"), "");
+      const fromEnvFile = writeFile(join(home, "envfile-dir/history.jsonl"), "");
+      const fromShell = writeFile(join(home, "shell-dir/history.jsonl"), "");
+      const config = writeFile(join(home, "config.env"), `CLAUDE_CONFIG_DIR=${join(home, "config-dir")}\n`);
+      const envFile = writeFile(join(home, "my.env"), `CLAUDE_CONFIG_DIR=${join(home, "envfile-dir")}\n`);
+      return { home, config, envFile, fromConfig, fromEnvFile, fromShell };
+    };
+
+    test("reads settings from the config file named by AI_CHAT_LOGS_CONFIG", () => {
+      const { home, config, fromConfig } = setupConfig();
+      expect(runSources({ HOME: home, AI_CHAT_LOGS_CONFIG: config }).stdout.toString()).toBe(`claude-code/history\t${fromConfig}\n`);
+    });
+
+    test("defaults to ai-chat-logs/config.env under XDG_CONFIG_HOME", () => {
+      const { home, fromConfig } = setupConfig();
+      writeFile(join(home, "xdg/ai-chat-logs/config.env"), `CLAUDE_CONFIG_DIR=${join(home, "config-dir")}\n`);
+      const env = isolatedEnv({ HOME: home, XDG_CONFIG_HOME: join(home, "xdg") });
+      delete env.AI_CHAT_LOGS_CONFIG;
+      const result = Bun.spawnSync([join(repoRoot, "src/cli/sources.ts")], { env });
+      expect(result.stdout.toString()).toBe(`claude-code/history\t${fromConfig}\n`);
+    });
+
+    test("prefers the .env file and then the environment over the config file", () => {
+      const { home, config, envFile, fromEnvFile, fromShell } = setupConfig();
+      expect(runSources({ HOME: home, AI_CHAT_LOGS_CONFIG: config, AI_CHAT_LOGS_ENV_FILE: envFile }).stdout.toString()).toBe(
+        `claude-code/history\t${fromEnvFile}\n`,
+      );
+      expect(
+        runSources({ HOME: home, AI_CHAT_LOGS_CONFIG: config, AI_CHAT_LOGS_ENV_FILE: envFile, CLAUDE_CONFIG_DIR: join(home, "shell-dir") }).stdout.toString(),
+      ).toBe(`claude-code/history\t${fromShell}\n`);
+    });
+
+    test("exits 2 on a malformed config file", () => {
+      const home = tempDir();
+      const config = writeFile(join(home, "bad.env"), "x\n");
+      const result = runSources({ HOME: home, AI_CHAT_LOGS_CONFIG: config });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr.toString()).toContain(`${config}: line 1`);
+    });
+
+    test("AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR moves the desktop app directory", () => {
+      const home = tempDir();
+      const session = writeFile(join(home, "desk/claude-code-sessions/a/b/local_1.json"), "{}");
+      expect(runSources({ HOME: home, AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR: join(home, "desk") }).stdout.toString()).toBe(
+        `claude-desktop/session\t${session}\n`,
+      );
+    });
+  });
 });
+

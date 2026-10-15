@@ -1,0 +1,21 @@
+[
+  { "name": "assignments, blank and comment lines", "input": "A=1\n\n# comment\n  # indented\nexport B=2\n", "pairs": [["A", "1"], ["B", "2"]] },
+  { "name": "= in values, empty values, spaces", "input": "A=b=c\nB=\n  C  =  d e  \n", "pairs": [["A", "b=c"], ["B", ""], ["C", "d e"]] },
+  { "name": "comments after whitespace in unquoted values", "input": "A=b # c\nB=b#c\nC=x\t# tab\n", "pairs": [["A", "b"], ["B", "b#c"], ["C", "x"]] },
+  {
+    "name": "double-quoted values",
+    "input": "A=\"b # c \"\nB=\"l1\\nl2\"\nC=\"q\\\"q\"\nD=\"back\\\\slash\"\nE=\"keep\\t\"\nF=\"v\" # comment\n",
+    "pairs": [["A", "b # c "], ["B", "l1\nl2"], ["C", "q\"q"], ["D", "back\\slash"], ["E", "keep\\t"], ["F", "v"]]
+  },
+  { "name": "single-quoted values are literal", "input": "A='b\\n $X # c'\n", "pairs": [["A", "b\\n $X # c"]] },
+  { "name": "no expansion", "input": "X=1\nA=$X\nB=${X}\nC=~/db\n", "pairs": [["X", "1"], ["A", "$X"], ["B", "${X}"], ["C", "~/db"]] },
+  { "name": "carriage returns", "input": "A=1\r\nB=\"2\"\r\n", "pairs": [["A", "1"], ["B", "2"]] },
+  { "name": "later assignments win", "input": "A=1\nB=x\nA=2\n", "pairs": [["A", "2"], ["B", "x"]] },
+  { "name": "multibyte values", "input": "A=\"日本語 # のパス\"\nB=値\n", "pairs": [["A", "日本語 # のパス"], ["B", "値"]] },
+  { "name": "invalid name", "input": "1A=x", "errorLine": 1 },
+  { "name": "hyphen in name", "input": "OK=1\nA-B=x", "errorLine": 2 },
+  { "name": "missing =", "input": "OK=1\nOK=2\nnoequals", "errorLine": 3 },
+  { "name": "unterminated double quote", "input": "A=\"open", "errorLine": 1 },
+  { "name": "unterminated single quote", "input": "A='open", "errorLine": 1 },
+  { "name": "characters after a closing quote", "input": "A=\"v\" extra", "errorLine": 1 }
+]

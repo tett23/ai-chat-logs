@@ -35,7 +35,7 @@ Claude Code は、既定で30日を過ぎたセッションの履歴を削除す
 claude.ai（Web とデスクトップアプリのチャット）の会話は手元に無いため、公式のエクスポートから取り込む（[ADR 0006](docs/adr/0006-import-cowork-and-claude-ai-chats.md)）。自動では最新にならないので、取り込みたいときに繰り返す。
 
 1. claude.ai の設定 → Privacy → Export data でエクスポートを要求する。届いたメールのリンクから zip をダウンロードする。
-2. zip を変換する：`bun src/cli/claude-ai-export-convert.ts <zip>`。元のファイルと変換した `messages.jsonl` が `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai/<ID>/` に置かれる（場所は `AI_CHAT_LOGS_CLAUDE_AI_DIR` で変えられる）。
+2. zip を変換する：`bun src/cli/claude-ai-export-convert.ts <zip>`。GUI の管理画面の「claude.ai のエクスポートを取り込む」でも、変換と取り込みをまとめて行える。元のファイルと変換した `messages.jsonl` が `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai/<ID>/` に置かれる（場所は `AI_CHAT_LOGS_CLAUDE_AI_DIR` で変えられる）。
 3. 次の取り込み（pm2 の定期実行か `bin/sync`）で、データベースに入る。
 
 何度エクスポートしても、同じメッセージは会話・検索・件数に1回だけ出る。
@@ -123,18 +123,20 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ | `~/.claude` |
 | `AI_CHAT_LOGS_CLAUDE_AI_DIR` | claude.ai のエクスポートの保存用のディレクトリ | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai` |
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 * * * *` |
+| `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR` | デスクトップアプリのディレクトリ | `~/Library/Application Support/Claude` |
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
+| `AI_CHAT_LOGS_CONFIG` | 読む設定ファイルのパス | `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env` |
 
-これらは、リポジトリのルートの `.env` にも書ける。
+これらは、リポジトリのルートの `.env` と、設定ファイル（GUI の管理画面が書く）にも書ける。値は、環境変数、`.env`、設定ファイル、既定の順に決まる（[ADR 0007](docs/adr/0007-settings-and-setup-screen.md)）。書式はどちらも同じ。
 
 ```sh
 cp .env.example .env   # 使う行のコメントを外して値を書く
 ```
 
-- 既にある環境変数は `.env` より優先される。
+- 既にある環境変数は `.env` と設定ファイルより、`.env` は設定ファイルより優先される。
 - 実行したディレクトリの `.env` は読まない。どこから実行しても、リポジトリのルートの `.env`（または `AI_CHAT_LOGS_ENV_FILE`）だけを読む。
 - `$` と `~` は展開しない。パスは絶対パスで書く。
-- 書式に誤りがあると、CLI は終了コード2で終わり、`pm2 start` は失敗する。メッセージにファイルのパスと行番号が出る。
+- `.env` か設定ファイルの書式に誤りがあると、CLI は終了コード2で終わり、`pm2 start` は失敗する。メッセージにファイルのパスと行番号が出る。
 - `AI_CHAT_LOGS_CRON` は `pm2 start` のときに読まれる。変えたら `pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
 書式の詳細は [docs/specifications.md](docs/specifications.md) を参照。
@@ -162,7 +164,12 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 ```
 
 - 必要なもの：Rust（stable）と、Tauri の前提のライブラリ（macOS では Xcode の Command Line Tools）。
-- データベースは `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` を開く。GUI は `.env` を読まない。Finder から起動したアプリには環境変数が渡らないため、既定以外の場所は `open --env AI_CHAT_LOGS_DB=<パス> "AI Chat Logs.app"` のように渡す。
+- 設定は CLI と同じく、環境変数、`.env`、設定ファイル、既定の順に決まる。Finder から起動したアプリには環境変数が渡らないため、既定以外の場所は管理画面で設定ファイルに書く。
+- 「管理」の画面で次ができる（[ADR 0007](docs/adr/0007-settings-and-setup-screen.md)）。データベースが開けないときは、起動時にこの画面が開く。
+  - 設定：各パスと `bun` の場所の確認と変更（設定ファイルに書く）。値がどこから来たかも出す。
+  - 環境の検査：パス、データベース、最後の取り込み、`bun`、pm2 の登録、launchd の登録。
+  - 初期化：取り込み（データベースが無ければ作る）と、claude.ai のエクスポートの zip の取り込み。
+- GUI は取り込みのときに、このリポジトリ（`AI_CHAT_LOGS_REPO`。既定はビルドしたリポジトリ）のコマンドを `bun` で実行する。pm2 の操作はしない。
 - 左にセッションの一覧、上に検索の入力欄、右に会話を出す。プロジェクトの絞り込みで、Claude Code のプロジェクトのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 

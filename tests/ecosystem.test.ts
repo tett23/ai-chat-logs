@@ -37,4 +37,13 @@ describe("ecosystem.config.cjs", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain(`${envFile}: line 1`);
   });
+
+  test("takes the schedule from the config file below the .env file", () => {
+    const dir = tempDir();
+    const config = writeFile(join(dir, "config.env"), 'AI_CHAT_LOGS_CRON="*/15 * * * *"\n');
+    expect(load({ AI_CHAT_LOGS_CONFIG: config }).apps[0].cron_restart).toBe("*/15 * * * *");
+    const envFile = writeFile(join(dir, "my.env"), 'AI_CHAT_LOGS_CRON="*/20 * * * *"\n');
+    expect(load({ AI_CHAT_LOGS_CONFIG: config, AI_CHAT_LOGS_ENV_FILE: envFile }).apps[0].cron_restart).toBe("*/20 * * * *");
+  });
 });
+

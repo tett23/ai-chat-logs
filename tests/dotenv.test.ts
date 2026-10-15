@@ -58,6 +58,17 @@ describe("parseDotenv", () => {
   });
 });
 
+type Case = { name: string; input: string; pairs?: [string, string][]; errorLine?: number };
+const cases: Case[] = JSON.parse(readFileSync(join(repoRoot, "tests/fixtures/dotenv-cases.json"), "utf8"));
+
+// docs/adr/0007: the same cases are checked against the Rust parser of the GUI.
+describe("parseDotenv: shared cases", () => {
+  test.each(cases.map((c) => [c.name, c] as const))("%s", (_, c) => {
+    if (c.errorLine === undefined) expect(parseDotenv(c.input)).toEqual(c.pairs ?? []);
+    else expect(() => parseDotenv(c.input)).toThrow(new RegExp(`line ${c.errorLine}\\b`));
+  });
+});
+
 describe("pickUnset", () => {
   test("keeps only names not already set", () => {
     expect(pickUnset({ A: "shell", C: "" }, [["A", "env"], ["B", "env"], ["C", "env"]])).toEqual([["B", "env"]]);
