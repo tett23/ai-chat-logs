@@ -14,3 +14,10 @@ export const jsonl = (...records: unknown[]): string =>
   records.map((r) => `${JSON.stringify(r)}\n`).join("");
 
 export const repoRoot = join(import.meta.dir, "..");
+
+// Environment for child processes that never reads the repository's own .env.
+export const isolatedEnv = (extra: Record<string, string | undefined> = {}): Record<string, string | undefined> => ({
+  PATH: process.env.PATH ?? "",
+  AI_CHAT_LOGS_ENV_FILE: join(tempDir(), "absent.env"),
+  ...extra,
+});

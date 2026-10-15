@@ -1,5 +1,5 @@
 #!/bin/sh
-# docs/adr/0001, docs/adr/0002: list the sources, then import them.
+# docs/adr/0001, docs/adr/0002, docs/adr/0004: list the sources, then import them.
 set -eu
 
 if ! command -v bun >/dev/null 2>&1; then
@@ -10,5 +10,6 @@ fi
 root=$(cd "$(dirname "$0")/.." && pwd)
 
 # Collect the whole list first so that a failed listing never marks sources as missing.
-sources=$(bun "$root/src/cli/sources.ts")
-printf '%s\n' "$sources" | bun "$root/src/cli/import.ts" --mark-missing "$@"
+# --no-env-file: the CLIs read the repository .env themselves, never the one in the working directory.
+sources=$(bun --no-env-file "$root/src/cli/sources.ts")
+printf '%s\n' "$sources" | bun --no-env-file "$root/src/cli/import.ts" --mark-missing "$@"

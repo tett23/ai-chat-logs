@@ -1,9 +1,12 @@
-#!/usr/bin/env bun
+#!/usr/bin/env -S bun --no-env-file
 // docs/adr/0001: read "<kind>\t<path>" lines from stdin and import them incrementally.
 import { parseArgs } from "node:util";
 import { openDatabase } from "../db.ts";
+import { loadEnvFile } from "../env.ts";
 import { importSources, parseSourceList } from "../import.ts";
 import { defaultDatabasePath } from "../paths.ts";
+
+loadEnvFile();
 
 const { values } = parseArgs({
   options: {

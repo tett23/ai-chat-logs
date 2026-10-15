@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
+import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 describe("bin/sync", () => {
   test("lists and imports sources into the database", () => {
@@ -11,7 +11,7 @@ describe("bin/sync", () => {
     writeFile(join(home, ".claude/projects/p/s/tool-results/t.txt"), "out");
     const dbPath = join(home, "out.sqlite");
     const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], {
-      env: { PATH: process.env.PATH ?? "", HOME: home, AI_CHAT_LOGS_DB: dbPath },
+      env: isolatedEnv({ HOME: home, AI_CHAT_LOGS_DB: dbPath }),
     });
     expect(result.exitCode).toBe(0);
     const db = new Database(dbPath, { readonly: true });
@@ -20,7 +20,7 @@ describe("bin/sync", () => {
   });
 
   test("exits 127 when bun is not in PATH", () => {
-    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: { PATH: "/usr/bin:/bin", HOME: tempDir() } });
+    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: isolatedEnv({ PATH: "/usr/bin:/bin", HOME: tempDir() }) });
     expect(result.exitCode).toBe(127);
     expect(result.stderr.toString()).toContain("bun");
   });
@@ -29,12 +29,23 @@ describe("bin/sync", () => {
     const home = tempDir();
     const path = writeFile(join(home, ".claude/projects/p/s.jsonl"), jsonl({ a: 1 }));
     const dbPath = join(home, "out.sqlite");
-    const env = { PATH: process.env.PATH ?? "", HOME: home, AI_CHAT_LOGS_DB: dbPath };
+    const env = isolatedEnv({ HOME: home, AI_CHAT_LOGS_DB: dbPath });
     expect(Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env }).exitCode).toBe(0);
     // a config dir that cannot be read makes the listing fail
     const broken = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: { ...env, CLAUDE_CONFIG_DIR: join(dirname(path), "s.jsonl") } });
     expect(broken.exitCode).not.toBe(0);
     const db = new Database(dbPath, { readonly: true });
     expect(db.query("SELECT missing_since m FROM sources").get()).toEqual({ m: null });
+  });
+
+  test("imports into AI_CHAT_LOGS_DB from the env file", () => {
+    const home = tempDir();
+    writeFile(join(home, ".claude/history.jsonl"), jsonl({ display: "x" }));
+    const dbPath = join(home, "from-env.sqlite");
+    const envFile = writeFile(join(home, "my.env"), `AI_CHAT_LOGS_DB=${dbPath}\n`);
+    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: isolatedEnv({ HOME: home, AI_CHAT_LOGS_ENV_FILE: envFile }) });
+    expect(result.exitCode).toBe(0);
+    const db = new Database(dbPath, { readonly: true });
+    expect(db.query("SELECT count(*) c FROM records").get()).toEqual({ c: 1 });
   });
 });

@@ -4,7 +4,7 @@ import { appendFileSync, chmodSync, rmSync, statSync, writeFileSync } from "node
 import { join } from "node:path";
 import { openDatabase, SCHEMA_VERSION } from "../src/db.ts";
 import { type SourceEntry, importSources } from "../src/import.ts";
-import { jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
+import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 const setup = () => {
   const dir = tempDir();
@@ -209,7 +209,7 @@ describe("claude-log-import CLI", () => {
     chmodSync(bad, 0o000);
     const good = writeFile(join(dir, "good.jsonl"), jsonl({ a: 1 }));
     const input = `claude-code/transcript\t${bad}\nclaude-code/transcript\t${good}\n`;
-    const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts"), "--db", dbPath], { stdin: Buffer.from(input) });
+    const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts"), "--db", dbPath], { stdin: Buffer.from(input), env: isolatedEnv() });
     chmodSync(bad, 0o600);
     expect(result.exitCode).toBe(1);
     const db = new Database(dbPath, { readonly: true });
@@ -224,7 +224,7 @@ describe("claude-log-import CLI", () => {
     const good = writeFile(join(dir, "good.jsonl"), jsonl({ a: 1 }));
     const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts")], {
       stdin: Buffer.from(`claude-code/transcript\t${good}\n`),
-      env: { ...process.env, AI_CHAT_LOGS_DB: dbPath },
+      env: isolatedEnv({ HOME: dir, AI_CHAT_LOGS_DB: dbPath }),
     });
     expect(result.exitCode).toBe(0);
     expect(statSync(dbPath).isFile()).toBe(true);
@@ -233,8 +233,7 @@ describe("claude-log-import CLI", () => {
   test("defaults to the XDG data directory", () => {
     const dir = tempDir();
     const good = writeFile(join(dir, "good.jsonl"), jsonl({ a: 1 }));
-    const env = { ...process.env, XDG_DATA_HOME: join(dir, "xdg") };
-    delete env.AI_CHAT_LOGS_DB;
+    const env = isolatedEnv({ HOME: dir, XDG_DATA_HOME: join(dir, "xdg") });
     const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts")], { stdin: Buffer.from(`claude-code/transcript\t${good}\n`), env });
     expect(result.exitCode).toBe(0);
     expect(statSync(join(dir, "xdg/ai-chat-logs/claude.sqlite")).isFile()).toBe(true);
@@ -242,7 +241,7 @@ describe("claude-log-import CLI", () => {
 
   test("reports unknown kinds as errors", () => {
     const dir = tempDir();
-    const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts"), "--db", join(dir, "c.sqlite")], { stdin: Buffer.from("weird\t/x\n") });
+    const result = Bun.spawnSync(["bun", join(repoRoot, "src/cli/import.ts"), "--db", join(dir, "c.sqlite")], { stdin: Buffer.from("weird\t/x\n"), env: isolatedEnv() });
     expect(result.exitCode).toBe(1);
   });
 });
@@ -264,3 +263,35 @@ describe("importSources: chunked reads", () => {
     expect(rawLines(db, path).at(-1)).toEqual({ line_no: 5, raw: '{"partial":1}', generation: 0 });
   });
 });
+
+describe("claude-log-import CLI with an env file", () => {
+  const run = (env: Record<string, string>, input: string) =>
+    Bun.spawnSync([join(repoRoot, "src/cli/import.ts")], { stdin: Buffer.from(input), env: isolatedEnv(env) });
+
+  test("reads AI_CHAT_LOGS_DB from the env file", () => {
+    const dir = tempDir();
+    const good = writeFile(join(dir, "good.jsonl"), jsonl({ a: 1 }));
+    const envFile = writeFile(join(dir, "my.env"), `AI_CHAT_LOGS_DB="${join(dir, "from-env.sqlite")}"\n`);
+    expect(run({ HOME: dir, AI_CHAT_LOGS_ENV_FILE: envFile }, `claude-code/transcript\t${good}\n`).exitCode).toBe(0);
+    expect(statSync(join(dir, "from-env.sqlite")).isFile()).toBe(true);
+  });
+
+  test("prefers AI_CHAT_LOGS_DB from the environment", () => {
+    const dir = tempDir();
+    const good = writeFile(join(dir, "good.jsonl"), jsonl({ a: 1 }));
+    const envFile = writeFile(join(dir, "my.env"), `AI_CHAT_LOGS_DB=${join(dir, "from-env.sqlite")}\n`);
+    const shellDb = join(dir, "from-shell.sqlite");
+    expect(run({ HOME: dir, AI_CHAT_LOGS_ENV_FILE: envFile, AI_CHAT_LOGS_DB: shellDb }, `claude-code/transcript\t${good}\n`).exitCode).toBe(0);
+    expect(statSync(shellDb).isFile()).toBe(true);
+    expect(() => statSync(join(dir, "from-env.sqlite"))).toThrow();
+  });
+
+  test("exits 2 on a malformed env file", () => {
+    const dir = tempDir();
+    const envFile = writeFile(join(dir, "bad.env"), "A='open\n");
+    const result = run({ HOME: dir, AI_CHAT_LOGS_ENV_FILE: envFile }, "");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr.toString()).toContain(`${envFile}: line 1`);
+  });
+});
+

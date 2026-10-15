@@ -46,7 +46,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ### データベース
 
-- 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude.sqlite` の順。
+- 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
 - スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は1）。
 
@@ -63,9 +63,34 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0002](adr/0002-periodic-sync-with-pm2.md)
 
-- `ecosystem.config.cjs` に、pm2 のアプリ `ai-chat-logs-sync` を1つ定義する。`bin/sync` を `/bin/sh` で実行し、`autorestart: false`、`cron_restart` は `AI_CHAT_LOGS_CRON`（既定は `0 * * * *`）。
+- `ecosystem.config.cjs` に、pm2 のアプリ `ai-chat-logs-sync` を1つ定義する。`bin/sync` を `/bin/sh` で実行し、`autorestart: false`、`cron_restart` は `AI_CHAT_LOGS_CRON`（`.env` から読んだものを含む。既定は `0 * * * *`）。
 - `pm2 start` の時点の `PATH` をアプリに渡す。
 - `bin/sync` は、`bun` が `PATH` に無ければ終了コード127で終わる。
+
+## .env
+
+[ADR 0004](adr/0004-load-environment-from-dotenv.md)
+
+### 読むファイルと優先順位
+
+- `AI_CHAT_LOGS_ENV_FILE` があればそのファイルを、無ければリポジトリのルートの `.env` を読む。ファイルが無ければ何もしない。
+- 既にある環境変数は上書きしない。
+- 実行したディレクトリの `.env` は読まない。CLI は `bun --no-env-file` で動かし、Bun の自動の読み込みを止める。
+- CLI（`claude-log-sources`、`claude-log-import`）は起動の直後に、`ecosystem.config.cjs` は `cron_restart` を決める前に読む。
+- 名前の制限は無い。このツールが読むのは `AI_CHAT_LOGS_DB`、`XDG_DATA_HOME`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CRON`。
+- 設定できる変数は `.env.example` にコメントで示す。`.env` は git の管理外。
+
+### 書式
+
+- 行末の `\r` を除く。空の行と、空白を除いた先頭が `#` の行は飛ばす。先頭の `export ` は除く。
+- 最初の `=` の左が名前（前後の空白を除き、`[A-Za-z_][A-Za-z0-9_]*`）、右が値。
+- 値は前後の空白を除いてから解釈する。
+  - `"…"`：`\n`、`\"`、`\\` を改行、`"`、`\` にする。ほかの `\` は残す。
+  - `'…'`：中身をそのまま使う。
+  - 閉じる引用符の後には、空白と `#` で始まるコメントだけを置ける。
+  - 引用符なし：空白の直後の `#` から後ろを除き、後ろの空白を除く。
+- `$` と `~` は展開しない。行をまたぐ値は扱わない。同じ名前は後のものを使う。
+- 名前が不正な行、`=` の無い行、閉じない引用符、閉じる引用符の後の余計な文字はエラー。メッセージは `<パス>: line <行番号>: <理由>`。CLI は終了コード2で終わり、`ecosystem.config.cjs` は例外を投げる。
 
 ## 破棄したADR
 
