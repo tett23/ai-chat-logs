@@ -11,6 +11,51 @@ Claude Code は、既定で30日を過ぎたセッションの履歴を削除す
 - [Bun](https://bun.com/)
 - [pm2](https://pm2.keymetrics.io/)（定期実行する場合）
 
+## 手動で行う作業
+
+このツールは、システムの設定を変える作業（pm2 のインストール、launchd への登録、PATH の設定）を自動では行わない（[ADR 0002](docs/adr/0002-periodic-sync-with-pm2.md)）。次の作業は手で行う。
+
+### 最初に一度
+
+1. Bun を入れる。
+2. pm2 を入れる：`bun add -g pm2`
+3. Bun のグローバルの bin を PATH に入れる。場所は `bun pm bin -g` で分かる（例：`~/.cache/.bun/bin`）。シェルの設定ファイル（`~/.zshrc` など）に `export PATH="<その場所>:$PATH"` を書き、シェルを開きなおす。
+   - これをしないと `pm2` が見つからない。zsh では `zsh: correct 'pm2' to '_pm2' [nyae]?` と聞かれる（`n` で答える）。
+   - 一時的に PATH を足すだけでも動くが、`pm2 startup` がその時点の PATH を launchd に書き込むため、設定ファイルに書いて永続させる。
+4. `bun` と `pm2` の両方が見つかるシェルで、リポジトリのルートから取り込みを登録する：`pm2 start ecosystem.config.cjs`
+   - 登録した時点で1回目の取り込みが始まる。履歴の量によっては数十秒から数分かかる。`pm2 status ai-chat-logs-sync` が `stopped` になれば終わり。
+5. `pm2 startup` を実行し、表示された `sudo` のコマンドを、内容を確かめてから実行する。
+6. `pm2 save` を実行する。
+7. 確かめる：`pm2 logs ai-chat-logs-sync --lines 5` に `run=… errors=0` が出ていること。
+
+5 と 6 をしないと、再起動の後に取り込みが黙って止まる（下の「定期的に取り込む」を参照）。
+
+### 設定を変えたとき
+
+- `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME` は、次の取り込みから効く。登録しなおす必要は無い。
+- `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+
+### リポジトリを更新したとき
+
+- `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
+- `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+
+### pm2 や Bun を入れなおしたとき
+
+pm2 や `bun` の場所が変わると、launchd に書き込まれた PATH と合わなくなる。`pm2 unstartup` で登録を消し、表示された `sudo` のコマンドを実行してから、上の 5 と 6 をやりなおす。
+
+### 再起動の後
+
+`pm2 status ai-chat-logs-sync` でアプリがあることを確かめる。無ければ `pm2 startup` か `pm2 save` が済んでいない。
+
+### GUI を使うとき
+
+`gui/` でビルドし、アプリを起動する（下の「閲覧・検索する」を参照）。データベースが既定の場所に無い場合は、起動するときに `AI_CHAT_LOGS_DB` を渡す。
+
+### 開発するとき
+
+クローンごとに `git config core.hooksPath .githooks` を実行する（下の「開発」を参照）。
+
 ## 使い方
 
 ### 1回だけ取り込む
