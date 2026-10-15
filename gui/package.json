@@ -1,0 +1,21 @@
+{
+  "name": "ai-chat-logs-gui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "bun --port=1420 ./index.html",
+    "build": "bun run build.ts",
+    "test": "bun test",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.12.3",
+    "bun-plugin-tailwind": "0.1.2",
+    "tailwindcss": "4.3.3"
+  }
+}

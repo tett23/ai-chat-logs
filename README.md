@@ -94,6 +94,22 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 
 表とビューは [docs/specifications.md](docs/specifications.md) を参照。
 
+### 閲覧・検索する（GUI）
+
+`gui/` に、履歴を閲覧・検索する Tauri のアプリがある。データベースは読み取り専用で開くため、pm2 の取り込みと同時に使える。
+
+```sh
+cd gui
+bun install
+bun run tauri dev          # 開発用に起動する
+bun run tauri build        # アプリをビルドする（src-tauri/target/release/bundle/）
+```
+
+- 必要なもの：Rust（stable）と、Tauri の前提のライブラリ（macOS では Xcode の Command Line Tools）。
+- データベースは `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` を開く。GUI は `.env` を読まない。Finder から起動したアプリには環境変数が渡らないため、既定以外の場所は `open --env AI_CHAT_LOGS_DB=<パス> "AI Chat Logs.app"` のように渡す。
+- 左にセッションの一覧、上に検索の入力欄、右に会話を出す。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
+- ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
+
 ## 開発
 
 クローン後、gitのhookを有効化する。コミット済みのADRの変更は [adr-guard](https://github.com/tett23/adr-guard) で拒否する。
@@ -102,7 +118,7 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 git config core.hooksPath .githooks
 ```
 
-テストは `bun test` で実行する。
+テストは `bun test` で実行する。GUI のテストは `gui/` で `bun test`、`gui/src-tauri/` で `cargo test`。
 
 設計判断は `docs/adr/` にADRとして記録する。仕様は [docs/specifications.md](docs/specifications.md) を参照。
 

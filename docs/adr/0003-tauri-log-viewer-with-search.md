@@ -1,6 +1,6 @@
 # ADR 0003: Tauri で履歴を閲覧・検索する GUI を作る
 
-ステータス: 採択
+ステータス: 採択→データベースの既定の場所と実装の細部は[ADR 0005](0005-log-viewer-corrections-and-details.md)
 
 ## 文脈
 
