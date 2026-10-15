@@ -7,7 +7,8 @@
   "type": "module",
   "bin": {
     "claude-log-sources": "src/cli/sources.ts",
-    "chat-log-import": "src/cli/import.ts"
+    "chat-log-import": "src/cli/import.ts",
+    "claude-ai-export-convert": "src/cli/claude-ai-export-convert.ts"
   },
   "scripts": {
     "test": "bun test",

@@ -1,6 +1,6 @@
 # ADR 0001: Claude のチャット履歴を SQLite に取り込む
 
-ステータス: 採択
+ステータス: 採択→Claude 以外の会話（Cowork と claude.ai）の取り込みは[ADR 0006](0006-import-cowork-and-claude-ai-chats.md)
 
 ## 文脈
 

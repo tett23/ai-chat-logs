@@ -2,6 +2,7 @@
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
 import { splitFences } from "./fences.ts";
+import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { splitSnippet } from "./snippet.ts";
 
 const PAGE = 50;
@@ -10,7 +11,7 @@ const SEARCH_DELAY_MS = 300;
 type ListMode = { kind: "sessions" } | { kind: "search"; query: string };
 
 const state = {
-  cwd: null as string | null,
+  filter: null as Filter | null,
   mode: { kind: "sessions" } as ListMode,
   offset: 0,
   done: false,
@@ -182,9 +183,12 @@ const openSession = async (sessionId: string, uuid: string | null): Promise<void
 };
 
 // List
+const providerBadge = (provider: string): Node | null =>
+  provider === "claude-code" ? null : h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
+
 const sessionItem = (s: api.SessionSummary): Node =>
   h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null) } }, [
-    h("div", { class: "truncate font-medium" }, [s.title ?? s.session_id]),
+    h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
     h("div", { class: "flex justify-between text-xs text-gray-500" }, [
       h("span", {}, [formatTime(s.last_at)]),
       h("span", {}, [`${s.message_count} 件`]),
@@ -203,7 +207,7 @@ const hitItem = (hit: api.SearchHit): Node =>
     "li",
     { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.uuid) } },
     [
-      h("div", { class: "truncate text-xs font-medium" }, [hit.title ?? hit.session_id ?? ""]),
+      h("div", { class: "truncate text-xs font-medium" }, [providerBadge(hit.provider), hit.title ?? hit.session_id ?? ""]),
       h("div", { class: "text-xs text-gray-500" }, [`${hit.role ?? ""} ${formatTime(hit.timestamp)}`]),
       snippetNode(hit.snippet),
     ],
@@ -217,8 +221,8 @@ const loadPage = async (): Promise<void> => {
     const mode = state.mode;
     const items =
       mode.kind === "sessions"
-        ? (await api.listSessions(state.cwd, state.offset, PAGE)).map(sessionItem)
-        : await api.search(mode.query, state.cwd, state.offset, PAGE).then((r) => {
+        ? (await api.listSessions(state.filter, state.offset, PAGE)).map(sessionItem)
+        : await api.search(mode.query, state.filter, state.offset, PAGE).then((r) => {
             notice.textContent = r.slow ? "3文字未満の語を含むため、全件を走査しています（遅くなります）。" : "";
             return r.hits.map(hitItem);
           });
@@ -260,7 +264,7 @@ searchBox.addEventListener("input", () => {
 });
 
 projectSelect.addEventListener("change", () => {
-  state.cwd = projectSelect.value === "" ? null : projectSelect.value;
+  state.filter = projectSelect.value === "" ? null : (JSON.parse(projectSelect.value) as Filter);
   resetList();
 });
 
@@ -275,9 +279,7 @@ const start = async (): Promise<void> => {
   clear(
     projectSelect,
     h("option", { attrs: { value: "" } }, ["すべてのプロジェクト"]),
-    ...projects
-      .filter((p) => p.cwd !== null)
-      .map((p) => h("option", { attrs: { value: p.cwd ?? "" } }, [`${p.cwd}（${p.session_count}）`])),
+    ...projectOptions(projects).map((o) => h("option", { attrs: { value: JSON.stringify(o.filter) } }, [o.label])),
   );
   clear(view, h("p", { class: "text-gray-500" }, [`データベース: ${s.path ?? ""}`]));
   resetList();

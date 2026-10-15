@@ -31,12 +31,18 @@ export const rebuildSessions = (db: Database, keys: readonly SessionKey[]): void
 };
 
 // Sessions whose summaries depend on a new version of a file of the given kind.
+const SESSION_FILE_PROVIDERS: Record<string, string> = {
+  "claude-desktop/session": "claude-code",
+  "claude-cowork/session": "claude-cowork",
+};
+
 export const sessionsOfFile = (kind: string, content: Uint8Array): SessionKey[] => {
-  if (kind !== "claude-desktop/session") return [];
+  const provider = SESSION_FILE_PROVIDERS[kind];
+  if (provider === undefined) return [];
   try {
     const value: unknown = JSON.parse(new TextDecoder().decode(content));
     const id = (value as { cliSessionId?: unknown } | null)?.cliSessionId;
-    return typeof id === "string" ? [{ provider: "claude-code", sessionId: id }] : [];
+    return typeof id === "string" ? [{ provider, sessionId: id }] : [];
   } catch {
     return [];
   }

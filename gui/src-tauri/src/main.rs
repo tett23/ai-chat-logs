@@ -65,12 +65,13 @@ fn status(state: tauri::State<'_, AppState>) -> Status {
 #[tauri::command(async)]
 fn list_sessions(
     state: tauri::State<'_, AppState>,
+    provider: Option<String>,
     cwd: Option<String>,
     offset: i64,
     limit: i64,
 ) -> CommandResult<Vec<SessionSummary>> {
     with_db(&state, |c| {
-        store::list_sessions(c, cwd.as_deref(), offset, limit)
+        store::list_sessions(c, provider.as_deref(), cwd.as_deref(), offset, limit)
     })
 }
 
@@ -100,13 +101,14 @@ fn get_block(
 fn search(
     state: tauri::State<'_, AppState>,
     query: String,
+    provider: Option<String>,
     cwd: Option<String>,
     offset: i64,
     limit: i64,
 ) -> CommandResult<SearchResult> {
     let plan = query::plan_search(&query);
     with_db(&state, |c| {
-        store::search(c, &plan, cwd.as_deref(), offset, limit)
+        store::search(c, &plan, provider.as_deref(), cwd.as_deref(), offset, limit)
     })
 }
 

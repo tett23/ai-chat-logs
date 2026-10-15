@@ -64,4 +64,31 @@ describe("claude-log-sources", () => {
     expect(result.exitCode).toBe(2);
     expect(result.stderr.toString()).toContain(`${envFile}: line 2`);
   });
+
+  test("lists Cowork sessions and converted claude.ai exports", () => {
+    const home = tempDir();
+    const session = join(home, "Library/Application Support/Claude/local-agent-mode-sessions/a/b/local_1");
+    const aiDir = join(home, "ai");
+    const expected = [
+      ["claude-cowork/session", writeFile(`${session}.json`, "{}")],
+      ["claude-cowork/audit", writeFile(join(session, "audit.jsonl"), "")],
+      ["claude-cowork/transcript", writeFile(join(session, ".claude/projects/p/s.jsonl"), "")],
+      ["claude-ai/conversation", writeFile(join(aiDir, "0123456789abcdef/messages.jsonl"), "")],
+      ["claude-ai/export", writeFile(join(aiDir, "0123456789abcdef/conversations.json"), "[]")],
+    ];
+    writeFile(join(session, "uploads/a.pdf"), "x");
+    writeFile(join(session, "outputs/b.md"), "x");
+    const result = runSources({ HOME: home, AI_CHAT_LOGS_CLAUDE_AI_DIR: aiDir });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim().split("\n").sort()).toEqual(expected.map(([k, p]) => `${k}\t${p}`).sort());
+  });
+
+  test("defaults the claude.ai directory under XDG_DATA_HOME and reads it from the env file", () => {
+    const home = tempDir();
+    const byDefault = writeFile(join(home, "data/ai-chat-logs/claude-ai/x/messages.jsonl"), "");
+    expect(runSources({ HOME: home, XDG_DATA_HOME: join(home, "data") }).stdout.toString()).toBe(`claude-ai/conversation\t${byDefault}\n`);
+    const fromEnv = writeFile(join(home, "elsewhere/y/messages.jsonl"), "");
+    const envFile = writeFile(join(home, "my.env"), `AI_CHAT_LOGS_CLAUDE_AI_DIR=${join(home, "elsewhere")}\n`);
+    expect(runSources({ HOME: home, AI_CHAT_LOGS_ENV_FILE: envFile }).stdout.toString()).toBe(`claude-ai/conversation\t${fromEnv}\n`);
+  });
 });

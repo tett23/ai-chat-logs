@@ -18,7 +18,8 @@ export type SessionSummary = {
   message_count: number;
 };
 
-export type Project = { cwd: string | null; session_count: number };
+export type { Project } from "./projects.ts";
+import type { Filter, Project } from "./projects.ts";
 
 // full_length is the length before truncation, null when the body is whole (docs/adr/0005).
 export type Block =
@@ -52,9 +53,9 @@ export type SearchResult = { hits: SearchHit[]; slow: boolean };
 
 export const status = () => invoke<Status>("status");
 export const listProjects = () => invoke<Project[]>("list_projects");
-export const listSessions = (cwd: string | null, offset: number, limit: number) =>
-  invoke<SessionSummary[]>("list_sessions", { cwd, offset, limit });
+export const listSessions = (filter: Filter | null, offset: number, limit: number) =>
+  invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });
 export const getSession = (sessionId: string) => invoke<Message[]>("get_session", { sessionId });
 export const getBlock = (rowid: number, index: number) => invoke<Block>("get_block", { rowid, index });
-export const search = (query: string, cwd: string | null, offset: number, limit: number) =>
-  invoke<SearchResult>("search", { query, cwd, offset, limit });
+export const search = (query: string, filter: Filter | null, offset: number, limit: number) =>
+  invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });

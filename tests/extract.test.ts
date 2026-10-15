@@ -39,3 +39,24 @@ describe("extractFields: claude-code/history", () => {
     expect(extractFields("claude-code/history", JSON.stringify({ timestamp: "2026" })).timestamp).toBeNull();
   });
 });
+
+describe("extractFields: other providers", () => {
+  const transcriptLine = JSON.stringify({ type: "assistant", uuid: "u", sessionId: "s", timestamp: "2026-10-15T00:00:00.000Z" });
+
+  test("Cowork transcripts and claude.ai conversations are read like Claude Code transcripts", () => {
+    const expected = extractFields("claude-code/transcript", transcriptLine);
+    expect(extractFields("claude-cowork/transcript", transcriptLine)).toEqual(expected);
+    expect(extractFields("claude-ai/conversation", transcriptLine)).toEqual(expected);
+  });
+
+  test("Cowork audit lines use session_id and _audit_timestamp", () => {
+    const raw = JSON.stringify({ type: "user", uuid: "u1", session_id: "local-id", sessionId: "ignored", _audit_timestamp: "2026-07-01T17:10:07.552Z" });
+    expect(extractFields("claude-cowork/audit", raw)).toEqual({
+      type: "user",
+      uuid: "u1",
+      sessionId: "local-id",
+      timestamp: "2026-07-01T17:10:07.552Z",
+    });
+  });
+});
+

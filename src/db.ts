@@ -3,9 +3,10 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
 import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
+import otherProviders from "../schema/0003-other-providers.sql" with { type: "text" };
 
 // docs/adr/0001: migrations are applied in order; PRAGMA user_version holds the applied count.
-const MIGRATIONS: readonly string[] = [initial, searchAndSummaries];
+const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 

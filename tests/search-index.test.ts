@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
+import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
 import { openDatabase } from "../src/db.ts";
 import { importSources, type SourceEntry } from "../src/import.ts";
 import { jsonl, tempDir, writeFile } from "./helpers.ts";
@@ -157,6 +158,47 @@ describe("duplicated records", () => {
   });
 });
 
+describe("other providers", () => {
+  test("summarizes Cowork sessions with the desktop session title, ignoring audit lines", () => {
+    const { dir, db } = setup();
+    const t = writeFile(join(dir, "cw/s.jsonl"), jsonl(user("cw1", "Cowork の質問"), assistant("cw1", [{ type: "text", text: "Cowork の答え" }])));
+    const meta = writeFile(join(dir, "local_1.json"), JSON.stringify({ cliSessionId: "cw1", title: "Cowork の題" }));
+    const audit = writeFile(join(dir, "audit.jsonl"), jsonl({ type: "user", uuid: "x", session_id: "cw1", message: { role: "user", content: "監査の本文" } }));
+    importSources(db, [
+      { kind: "claude-cowork/transcript", path: t },
+      { kind: "claude-cowork/session", path: meta },
+      { kind: "claude-cowork/audit", path: audit },
+    ], {});
+    expect(db.query("SELECT * FROM session_summaries WHERE session_id = 'cw1'").get()).toMatchObject({
+      provider: "claude-cowork",
+      title: "Cowork の題",
+      message_count: 2,
+    });
+    expect(texts(db)).toEqual(["Cowork の質問", "Cowork の答え"]);
+  });
+
+  test("summarizes claude.ai conversations and counts messages of repeated exports once", () => {
+    const { dir, db } = setup();
+    const lines = jsonl(
+      { type: "custom-title", customTitle: "claude.ai の会話", sessionId: "c1" },
+      user("c1", [{ type: "text", text: "claude.ai の質問" }]),
+      assistant("c1", [{ type: "text", text: "claude.ai の答え" }]),
+    );
+    const first = writeFile(join(dir, "ai/aaaa/messages.jsonl"), lines);
+    const second = writeFile(join(dir, "ai/bbbb/messages.jsonl"), lines);
+    importSources(db, [
+      { kind: "claude-ai/conversation", path: first },
+      { kind: "claude-ai/conversation", path: second },
+    ], {});
+    expect(db.query("SELECT * FROM session_summaries WHERE session_id = 'c1'").get()).toMatchObject({
+      provider: "claude-ai",
+      title: "claude.ai の会話",
+      message_count: 2,
+    });
+    expect(db.query("SELECT count(*) c FROM messages WHERE provider = 'claude-ai'").get()).toEqual({ c: 4 });
+  });
+});
+
 describe("migration", () => {
   test("builds record_texts and session_summaries from existing records", () => {
     const dir = tempDir();
@@ -175,4 +217,25 @@ describe("migration", () => {
     expect(texts(db)).toEqual(["既存の本文"]);
     expect(summary(db, "s")).toMatchObject({ message_count: 1, title: "既存の本文" });
   });
+
+  test("migrating from version 2 keeps summaries and texts", () => {
+    const dir = tempDir();
+    const dbPath = join(dir, "v2.sqlite");
+    const old = new Database(dbPath);
+    old.run(initial);
+    old.run(searchAndSummaries);
+    old.run("PRAGMA user_version = 2");
+    old.query("INSERT INTO sources (id, kind, path, first_seen_at, last_seen_at) VALUES (1, 'claude-code/transcript', '/x.jsonl', 'n', 'n')").run();
+    old
+      .query("INSERT INTO records (source_id, line_no, raw, imported_at, type, uuid, session_id, timestamp) VALUES (1, 1, ?, 'n', 'user', 'u', 's', 't')")
+      .run(JSON.stringify(user("s", "版2の本文")));
+    old.run("INSERT INTO record_texts (rowid, text) SELECT record_rowid, text FROM record_text_source WHERE text <> ''");
+    old.run("INSERT INTO session_summaries SELECT * FROM session_summary_source");
+    const before = old.query("SELECT * FROM session_summaries").all();
+    old.close();
+    const db = openDatabase(dbPath);
+    expect(db.query("SELECT * FROM session_summaries").all()).toEqual(before);
+    expect(texts(db)).toEqual(["版2の本文"]);
+  });
 });
+

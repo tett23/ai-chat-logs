@@ -19,7 +19,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ### 種類と提供元
 
-種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code` と `claude-desktop`。
+種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code`、`claude-desktop`、`claude-cowork`、`claude-ai`（[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)）。
 列挙は提供元ごとのコマンド（いまは `claude-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
 提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、必要なら `messages` ビューの `UNION ALL` の枝を足す。表は変えない。
 
@@ -31,6 +31,12 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-code/history` | `$CLAUDE_CONFIG_DIR/history.jsonl` | 行ごと・差分 |
 | `claude-code/file` | `projects/<プロジェクト>/<セッションID>/` 以下の JSONL 以外のファイル、`projects/<プロジェクト>/*.json` | ファイルごと |
 | `claude-desktop/session` | `~/Library/Application Support/Claude/claude-code-sessions/` 以下の `*.json` | ファイルごと |
+| `claude-cowork/transcript` | `~/Library/Application Support/Claude/local-agent-mode-sessions/<ID>/<ID>/local_<ID>/.claude/projects/` 以下の `*.jsonl`（`memory/` を除く） | 行ごと・差分 |
+| `claude-cowork/file` | 同じく `projects/<プロジェクト>/<セッションID>/` 以下の JSONL 以外のファイル | ファイルごと |
+| `claude-cowork/session` | `local-agent-mode-sessions/<ID>/<ID>/local_<ID>.json` | ファイルごと |
+| `claude-cowork/audit` | `local-agent-mode-sessions/<ID>/<ID>/local_<ID>/audit.jsonl` | 行ごと・差分（会話・検索・要約には使わない） |
+| `claude-ai/conversation` | `$AI_CHAT_LOGS_CLAUDE_AI_DIR/<ID>/messages.jsonl` | 行ごと・差分 |
+| `claude-ai/export` | `$AI_CHAT_LOGS_CLAUDE_AI_DIR/<ID>/` の `conversations.json`、`projects.json`、`users.json` | ファイルごと |
 
 `CLAUDE_CONFIG_DIR` の既定は `~/.claude`。存在しないディレクトリは飛ばす。
 
@@ -45,6 +51,8 @@ ai-chat-logs の現行の仕様をまとめる。
 |---|---|---|---|---|
 | `claude-code/transcript` | `$.type` | `$.uuid` | `$.sessionId` | `$.timestamp`（文字列のまま） |
 | `claude-code/history` | NULL | NULL | `$.sessionId` | `$.timestamp`（ミリ秒）を ISO 8601（UTC、`Z`）にしたもの |
+| `claude-cowork/transcript`、`claude-ai/conversation` | `claude-code/transcript` と同じ | | | |
+| `claude-cowork/audit` | `$.type` | `$.uuid` | `$.session_id` | `$._audit_timestamp`（文字列のまま） |
 - ファイルが `consumed_bytes` より短くなったか、先頭 `min(4096, consumed_bytes)` バイトの SHA-256 が変わったら、書きかえとみなし、`generation` を上げた `sources` の行を作って先頭から読む。前の版の行は残す。
 - 1ファイルを1つのトランザクションで取り込む。
 
@@ -60,7 +68,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
-- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は2）。
+- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は3）。
 
 | 表・ビュー | 中身 |
 |---|---|
@@ -81,11 +89,21 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
 
-- 本文：`claude-code/transcript` の `user` と `assistant` のレコードの、文字列の `message.content`、または `text` と `thinking` のブロックを改行でつないだもの。`tool_use` と `tool_result` は入れない。空なら入れない。
+- 会話の種類：`claude-code/transcript`、`claude-cowork/transcript`、`claude-ai/conversation`。
+- 本文：会話の種類の `user` と `assistant` のレコードの、文字列の `message.content`、または `text` と `thinking` のブロックを改行でつないだもの。`tool_use` と `tool_result` は入れない。空なら入れない。
 - 写し：同じ提供元・セッションID・`uuid` のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。
 - 要約：メッセージが1つ以上あるセッションだけ。`first_at`・`last_at` はメッセージの時刻の最小と最大、`cwd` は時刻の順で最初のもの。
-- タイトル：最後の `custom-title`（パスと行番号の順）、無ければデスクトップアプリのセッションの最新の版の `title`（`cliSessionId` で対応）、無ければ最初の `isMeta` でない `user` の本文の先頭80文字。
+- タイトル：最後の `custom-title`（パスと行番号の順）、無ければセッションのファイルの最新の版の `title`（`cliSessionId` で対応。`claude-code` は `claude-desktop/session`、`claude-cowork` は `claude-cowork/session`）、無ければ最初の `isMeta` でない `user` の本文の先頭80文字。
 - 行を取り込むたびに、増えた行の本文を索引に足し、増えた行のセッションの要約を作りなおす。デスクトップアプリのセッションの版が増えたら、その `cliSessionId` のセッションの要約を作りなおす。
+
+### claude.ai のエクスポートの変換
+
+[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)
+
+- `claude-ai-export-convert <zip | ディレクトリ | conversations.json>`。zip は `unzip` で展開する。`conversations.json` は入力の直下か、その1段下から探す。
+- 出力先は `$AI_CHAT_LOGS_CLAUDE_AI_DIR/<conversations.json の SHA-256 の先頭16文字>/`。`conversations.json`、`projects.json`、`users.json`（あるもの）を写し、`messages.jsonl` を書く。既にあるファイルは上書きしない。出力先を標準出力に書く。
+- `conversations.json` が無い、JSON でない、配列でないときは、終了コード1で終わり、何も書かない。
+- `messages.jsonl`：会話を `created_at`、`uuid` の順に、名前があれば `{"type":"custom-title","customTitle","sessionId"}` の行、続けて各メッセージを `{"type","uuid","parentUuid","sessionId","timestamp","message":{"role","content"},"claudeAi":{"conversation","sender","attachments","files"}}` の行にする。`sender` が `human` なら `user`。`content` が空なら `text` から1つのテキストのブロックを作る。
 
 ## GUI
 
@@ -93,7 +111,8 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - `gui/`。Tauri 2、Rust（`rusqlite`）、TypeScript（フレームワークなし）、Tailwind CSS 4。
 - データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。`.env` は読まない。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
-- コマンド：`status`、`list_projects`、`list_sessions`（`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_session`（`session_id`。パス・`generation`・行番号の順）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`cwd`、`offset`、`limit`。時刻の新しい順）。
+- コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_session`（`session_id`。パス・`generation`・行番号の順）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順）。
+- プロジェクトの絞り込み：Claude Code は `cwd` ごと、ほかの提供元は提供元ごとに1項目。一覧と検索の結果に、Claude Code 以外の提供元の名前を出す。
 - 検索：空白で区切った語のうち、3文字以上の語は二重引用符で囲んだ FTS5 の語として AND でつなぎ、3文字未満の語は `LIKE`（`%`、`_`、`\` をエスケープ）で絞る。抜粋は、FTS5 の `snippet()`、3文字未満の語だけのときは本文から最初の一致の前後32文字を切り出したもの。強調は U+E000 と U+E001 で囲む。
 - `get_session` のブロックのうち、`thinking`、`tool_use`、`tool_result`、その他の本文は、4,000 文字を超えたら先頭の 4,000 文字と元の文字数を返す。
 - 画面：本文はプレーンテキスト。` ``` ` で囲まれた部分だけ等幅にする。`thinking`、`tool_use`、`tool_result`、サイドチェーンのレコードは折りたたみ、開いたときに中身を組み立てる。文字列は HTML として解釈させない。
