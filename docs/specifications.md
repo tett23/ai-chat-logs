@@ -60,7 +60,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
-- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は1）。
+- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は2）。
 
 | 表・ビュー | 中身 |
 |---|---|
@@ -69,7 +69,34 @@ ai-chat-logs の現行の仕様をまとめる。
 | `blobs` | ファイルの中身（SHA-256 で重複を除く） |
 | `file_versions` | ファイルごとの種類の、パスと中身の版 |
 | `runs` | 実行ごとの開始・終了の時刻、件数、失敗（JSON の配列） |
+| `record_texts` | 会話の本文の全文検索（FTS5、`trigram`）。`rowid` は `records.rowid` |
+| `session_summaries` | セッションの要約（提供元、セッションID、`cwd`、タイトル、最初と最後の時刻、メッセージの数） |
+| `record_text_source`（ビュー） | 本文の取り出しの規則 |
+| `copied_records`（ビュー） | 別のファイルに写された、同じ提供元・セッション・`uuid` のレコードのうち、2つ目以降のもの |
+| `session_messages`（ビュー） | セッションのメッセージ（写しを除く） |
+| `session_summary_source`（ビュー） | 要約の作り方 |
 | `messages`（ビュー） | 会話のメッセージ。いまは `claude-code/transcript` の `user` と `assistant` のレコード（提供元、セッションID、`uuid`、親の `uuid`、時刻、役割、モデル、サイドチェーンか、`cwd`、内容、元のパス） |
+
+### 検索の索引とセッションの要約
+
+[ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
+
+- 本文：`claude-code/transcript` の `user` と `assistant` のレコードの、文字列の `message.content`、または `text` と `thinking` のブロックを改行でつないだもの。`tool_use` と `tool_result` は入れない。空なら入れない。
+- 写し：同じ提供元・セッションID・`uuid` のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。
+- 要約：メッセージが1つ以上あるセッションだけ。`first_at`・`last_at` はメッセージの時刻の最小と最大、`cwd` は時刻の順で最初のもの。
+- タイトル：最後の `custom-title`（パスと行番号の順）、無ければデスクトップアプリのセッションの最新の版の `title`（`cliSessionId` で対応）、無ければ最初の `isMeta` でない `user` の本文の先頭80文字。
+- 行を取り込むたびに、増えた行の本文を索引に足し、増えた行のセッションの要約を作りなおす。デスクトップアプリのセッションの版が増えたら、その `cliSessionId` のセッションの要約を作りなおす。
+
+## GUI
+
+[ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
+
+- `gui/`。Tauri 2、Rust（`rusqlite`）、TypeScript（フレームワークなし）、Tailwind CSS 4。
+- データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。`.env` は読まない。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
+- コマンド：`status`、`list_projects`、`list_sessions`（`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_session`（`session_id`。パス・`generation`・行番号の順）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`cwd`、`offset`、`limit`。時刻の新しい順）。
+- 検索：空白で区切った語のうち、3文字以上の語は二重引用符で囲んだ FTS5 の語として AND でつなぎ、3文字未満の語は `LIKE`（`%`、`_`、`\` をエスケープ）で絞る。抜粋は、FTS5 の `snippet()`、3文字未満の語だけのときは本文から最初の一致の前後32文字を切り出したもの。強調は U+E000 と U+E001 で囲む。
+- `get_session` のブロックのうち、`thinking`、`tool_use`、`tool_result`、その他の本文は、4,000 文字を超えたら先頭の 4,000 文字と元の文字数を返す。
+- 画面：本文はプレーンテキスト。` ``` ` で囲まれた部分だけ等幅にする。`thinking`、`tool_use`、`tool_result`、サイドチェーンのレコードは折りたたみ、開いたときに中身を組み立てる。文字列は HTML として解釈させない。
 
 ## 定期実行
 

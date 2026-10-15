@@ -1,0 +1,15 @@
+[package]
+name = "ai-chat-logs-gui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2.7.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.4", features = [] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
