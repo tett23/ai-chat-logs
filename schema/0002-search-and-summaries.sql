@@ -42,11 +42,24 @@ SELECT r.rowid AS record_rowid,
 FROM records r JOIN sources s ON s.id = r.source_id
 WHERE s.kind = 'claude-code/transcript' AND r.type IN ('user', 'assistant');
 
--- Messages of sessions, the rows a summary is made of.
+-- Records that are later copies of another record of the same provider, session and uuid.
+CREATE VIEW copied_records AS
+SELECT r.rowid AS record_rowid
+FROM records r JOIN sources s ON s.id = r.source_id
+WHERE r.uuid IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM records r2 JOIN sources s2 ON s2.id = r2.source_id
+    WHERE r2.uuid = r.uuid AND r2.session_id IS r.session_id AND s2.provider = s.provider
+      AND (s2.path, s2.generation, r2.line_no) < (s.path, s.generation, r.line_no)
+  );
+
+-- Messages of sessions, the rows a summary is made of. A record copied into several files
+-- (same provider, session and uuid) appears once: the first in path, generation and line order.
 CREATE VIEW session_messages AS
 SELECT s.provider, r.session_id, r.rowid AS record_rowid, r.type, r.timestamp, r.raw, s.path, s.generation, r.line_no
 FROM records r JOIN sources s ON s.id = r.source_id
-WHERE s.kind = 'claude-code/transcript' AND r.type IN ('user', 'assistant') AND r.session_id IS NOT NULL;
+WHERE s.kind = 'claude-code/transcript' AND r.type IN ('user', 'assistant') AND r.session_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid);
 
 CREATE VIEW session_summary_source AS
 SELECT m.provider,

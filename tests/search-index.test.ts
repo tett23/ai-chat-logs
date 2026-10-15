@@ -137,6 +137,26 @@ describe("session_summaries", () => {
   });
 });
 
+describe("duplicated records", () => {
+  test("counts a record copied into another file once", () => {
+    const { dir, db } = setup();
+    const u = user("s", "写しの本文");
+    const a = assistant("s", [{ type: "text", text: "答え" }]);
+    const original = writeFile(join(dir, "a/s.jsonl"), jsonl(u, a));
+    const copy = writeFile(join(dir, "b/fork.jsonl"), jsonl(u, a, assistant("s", [{ type: "text", text: "写しにだけある" }])));
+    importSources(db, [transcript(original), transcript(copy)], {});
+    expect(summary(db, "s")).toMatchObject({ message_count: 3 });
+  });
+
+  test("does not merge records without a uuid", () => {
+    const { dir, db } = setup();
+    const noUuid = { ...user("s", "uuid の無い本文"), uuid: undefined };
+    const path = writeFile(join(dir, "s.jsonl"), jsonl(noUuid, noUuid));
+    importSources(db, [transcript(path)], {});
+    expect(summary(db, "s")).toMatchObject({ message_count: 2 });
+  });
+});
+
 describe("migration", () => {
   test("builds record_texts and session_summaries from existing records", () => {
     const dir = tempDir();
