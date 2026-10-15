@@ -1,0 +1,42 @@
+#!/bin/sh
+# docs/adr/0008: build the commands into standalone executables and install them.
+# Usage: bin/install [<install directory>]   (default: ~/.local/bin)
+set -eu
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "ai-chat-logs: bun is not found in PATH" >&2
+  exit 127
+fi
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+prefix=${1:-"$HOME/.local/bin"}
+# The repository whose .env the executables read; overridable for tests.
+repo=${AI_CHAT_LOGS_REPO_AT_BUILD:-$root}
+repo_literal=$(bun -e 'console.log(JSON.stringify(process.argv[1]))' "$repo")
+
+mkdir -p "$prefix"
+
+# Write to a temporary file, then rename, so that a running executable is never overwritten in place.
+place() {
+  mv -f "$1" "$prefix/$2"
+  echo "$prefix/$2"
+}
+
+build() {
+  tmp="$prefix/.$1.tmp.$$"
+  bun build --compile \
+    --no-compile-autoload-dotenv \
+    --no-compile-autoload-bunfig \
+    --define "AI_CHAT_LOGS_REPO_AT_BUILD=$repo_literal" \
+    "$root/$2" --outfile "$tmp" >/dev/null
+  place "$tmp" "$1"
+}
+
+build claude-log-sources src/cli/sources.ts
+build chat-log-import src/cli/import.ts
+build claude-ai-export-convert src/cli/claude-ai-export-convert.ts
+
+tmp="$prefix/.ai-chat-logs-sync.tmp.$$"
+cp "$root/bin/ai-chat-logs-sync" "$tmp"
+chmod +x "$tmp"
+place "$tmp" ai-chat-logs-sync
