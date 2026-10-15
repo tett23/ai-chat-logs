@@ -45,9 +45,22 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 - `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME`、`AI_CHAT_LOGS_CLAUDE_AI_DIR` は、次の取り込みから効く。登録しなおす必要は無い。
 - `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
+### コマンドをインストールするとき
+
+`bin/install` で、コマンドを単体で動く実行ファイルにビルドし、`~/.local/bin`（引数で変えられる）に入れる（[ADR 0008](docs/adr/0008-install-compiled-commands.md)）。
+
+```sh
+bin/install
+```
+
+- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
+- リポジトリの場所を埋めこむ。`.env` は、埋めこんだリポジトリのものを読む。実行したディレクトリの `.env` は読まない。
+- pm2 の定期実行と GUI の取り込みは、これまでどおりリポジトリの `bin/sync` を使う。インストールしたコマンドには依存しない。
+
 ### リポジトリを更新したとき
 
 - `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
+- `bin/install` でコマンドを入れている場合は、`bin/install` を実行しなおす。リポジトリを動かした場合も同じ。
 - `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
 ### pm2 や Bun を入れなおしたとき

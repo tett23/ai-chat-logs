@@ -1,0 +1,9 @@
+#!/bin/sh
+# docs/adr/0008: bin/sync for the executables installed by bin/install next to this script.
+set -eu
+
+dir=$(cd "$(dirname "$0")" && pwd)
+
+# Collect the whole list first so that a failed listing never marks sources as missing.
+sources=$("$dir/claude-log-sources")
+printf '%s\n' "$sources" | "$dir/chat-log-import" --mark-missing "$@"

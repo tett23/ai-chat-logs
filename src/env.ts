@@ -3,7 +3,10 @@ import { loadDotenv } from "./dotenv.cjs";
 
 type Env = Record<string, string | undefined>;
 
-const repoRoot = join(import.meta.dir, "..");
+// docs/adr/0008: bin/install embeds the repository with --define, because import.meta.dir points inside the
+// executable after bun build --compile.
+declare const AI_CHAT_LOGS_REPO_AT_BUILD: string | undefined;
+const repoRoot = typeof AI_CHAT_LOGS_REPO_AT_BUILD === "string" ? AI_CHAT_LOGS_REPO_AT_BUILD : join(import.meta.dir, "..");
 
 // docs/adr/0004: the env file is the repository's .env unless AI_CHAT_LOGS_ENV_FILE names another.
 export const envFilePath = (env: Env): string => env.AI_CHAT_LOGS_ENV_FILE || join(repoRoot, ".env");
