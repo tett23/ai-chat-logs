@@ -20,9 +20,20 @@ const MAX_BLOCK_CHARS: usize = 4000;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum StoreError {
-    NotFound { path: String },
-    OldSchema { found: i64, required: i64 },
-    Sqlite { message: String },
+    NotFound {
+        path: String,
+    },
+    OldSchema {
+        found: i64,
+        required: i64,
+    },
+    Sqlite {
+        message: String,
+    },
+    /// The settings could not be read (docs/adr/0007).
+    Settings {
+        message: String,
+    },
 }
 
 impl From<rusqlite::Error> for StoreError {

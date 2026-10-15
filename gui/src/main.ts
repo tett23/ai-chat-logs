@@ -1,4 +1,5 @@
-// docs/adr/0003: session list, search, and conversation view.
+// docs/adr/0003: session list, search, and conversation view. docs/adr/0007: the settings and setup screen.
+import { renderAdmin } from "./admin.ts";
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
 import { splitFences } from "./fences.ts";
@@ -29,17 +30,28 @@ const notice = h("div", { class: "text-xs text-gray-500" });
 const projectSelect = h("select", { class: "w-full rounded border border-gray-300 px-1 py-1" });
 const list = h("ul", { class: "flex-1 overflow-y-auto divide-y divide-gray-100" });
 const view = h("section", { class: "flex-1 overflow-y-auto p-4" });
+const browse = h("main", { class: "flex min-h-0 flex-1" }, [
+  h("aside", { class: "flex w-96 flex-col border-r border-gray-200" }, [
+    h("div", { class: "border-b border-gray-200 p-2" }, [projectSelect]),
+    list,
+  ]),
+  view,
+]);
+const admin = h("main", { class: "hidden min-h-0 flex-1 overflow-y-auto p-4" });
+
+const tabClass = (active: boolean): string =>
+  `shrink-0 whitespace-nowrap rounded px-3 py-1 text-sm ${active ? "bg-gray-900 text-white" : "border border-gray-300 hover:bg-gray-50"}`;
+const browseTab = h("button", { class: tabClass(true) }, ["閲覧"]);
+const adminTab = h("button", { class: tabClass(false) }, ["管理"]);
 
 clear(
   document.getElementById("app") as HTMLElement,
-  h("header", { class: "flex flex-col gap-1 border-b border-gray-200 p-2" }, [searchBox, notice]),
-  h("main", { class: "flex min-h-0 flex-1" }, [
-    h("aside", { class: "flex w-96 flex-col border-r border-gray-200" }, [
-      h("div", { class: "border-b border-gray-200 p-2" }, [projectSelect]),
-      list,
-    ]),
-    view,
+  h("header", { class: "flex flex-col gap-1 border-b border-gray-200 p-2" }, [
+    h("div", { class: "flex gap-2" }, [browseTab, adminTab, searchBox]),
+    notice,
   ]),
+  browse,
+  admin,
 );
 
 const formatTime = (iso: string | null): string => (iso ? new Date(iso).toLocaleString() : "");
@@ -52,6 +64,8 @@ const errorText = (error: api.StoreError): string => {
       return `データベースのスキーマが古いです（${error.found}、必要なのは ${error.required}）。chat-log-import を実行してください。`;
     case "sqlite":
       return `データベースのエラー: ${error.message}`;
+    case "settings":
+      return `設定のエラー: ${error.message}`;
   }
 };
 
@@ -268,10 +282,30 @@ projectSelect.addEventListener("change", () => {
   resetList();
 });
 
+// Reloads the project filter and the list after the database may have changed.
+let adminRendered = false;
+const showTab = (tab: "browse" | "admin"): void => {
+  browse.classList.toggle("hidden", tab !== "browse");
+  browse.classList.toggle("flex", tab === "browse");
+  admin.classList.toggle("hidden", tab !== "admin");
+  searchBox.disabled = tab !== "browse";
+  browseTab.className = tabClass(tab === "browse");
+  adminTab.className = tabClass(tab === "admin");
+  if (tab === "admin" && !adminRendered) {
+    adminRendered = true;
+    renderAdmin(admin, () => void start().catch(showError));
+  }
+};
+browseTab.addEventListener("click", () => showTab("browse"));
+adminTab.addEventListener("click", () => showTab("admin"));
+
 const start = async (): Promise<void> => {
   const s = await api.status();
   if (s.error) {
     showError(s.error);
+    clear(list);
+    clear(projectSelect, h("option", { attrs: { value: "" } }, ["すべてのプロジェクト"]));
+    showTab("admin");
     return;
   }
   notice.textContent = "";

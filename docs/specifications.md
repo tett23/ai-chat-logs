@@ -110,7 +110,7 @@ ai-chat-logs の現行の仕様をまとめる。
 [ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
 
 - `gui/`。Tauri 2、Rust（`rusqlite`）、TypeScript（フレームワークなし）、Tailwind CSS 4。
-- データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。`.env` は読まない。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
+- データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`（環境変数、`.env`、設定ファイルの順。[ADR 0007](adr/0007-settings-and-setup-screen.md)）、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
 - コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_session`（`session_id`。パス・`generation`・行番号の順）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順）。
 - プロジェクトの絞り込み：Claude Code は `cwd` ごと、ほかの提供元は提供元ごとに1項目。一覧と検索の結果に、Claude Code 以外の提供元の名前を出す。
 - 検索：空白で区切った語のうち、3文字以上の語は二重引用符で囲んだ FTS5 の語として AND でつなぎ、3文字未満の語は `LIKE`（`%`、`_`、`\` をエスケープ）で絞る。抜粋は、FTS5 の `snippet()`、3文字未満の語だけのときは本文から最初の一致の前後32文字を切り出したもの。強調は U+E000 と U+E001 で囲む。
@@ -149,6 +149,26 @@ ai-chat-logs の現行の仕様をまとめる。
   - 引用符なし：空白の直後の `#` から後ろを除き、後ろの空白を除く。
 - `$` と `~` は展開しない。行をまたぐ値は扱わない。同じ名前は後のものを使う。
 - 名前が不正な行、`=` の無い行、閉じない引用符、閉じる引用符の後の余計な文字はエラー。メッセージは `<パス>: line <行番号>: <理由>`。CLI は終了コード2で終わり、`ecosystem.config.cjs` は例外を投げる。
+
+## 設定ファイル
+
+[ADR 0007](adr/0007-settings-and-setup-screen.md)
+
+- 場所：`AI_CHAT_LOGS_CONFIG`、無ければ `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env`。書式は `.env` と同じ。
+- 優先順位：環境変数、`.env`、設定ファイル、既定。CLI、`ecosystem.config.cjs`、GUI のすべてが、この順で読む。
+- GUI の管理画面が書くのは設定ファイルだけ。項目は `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_REPO`、`AI_CHAT_LOGS_BUN`。
+- 書き方：`名前="値"`（`\` と `"` を逃がす）。改行を含む値は保存しない。最初の行を書きかえ、同じ名前の2行目以降を消す。空の値で保存するとその名前の行を消す。ほかの行は残す。一時ファイルから名前を変えて置きかえる。
+- `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`（既定は `~/Library/Application Support/Claude`）は、CLI の列挙でも使う。`AI_CHAT_LOGS_REPO`（既定は GUI をビルドしたリポジトリ）と `AI_CHAT_LOGS_BUN` は GUI だけが使う。
+- GUI の `bun` の探し方：`AI_CHAT_LOGS_BUN`、`PATH`、`~/.bun/bin/bun`、`~/.local/share/mise/shims/bun`、`/opt/homebrew/bin/bun`、`/usr/local/bin/bun` の順で、最初に実行できるもの。
+
+## 管理画面
+
+[ADR 0007](adr/0007-settings-and-setup-screen.md)
+
+- 画面の上の「閲覧」と「管理」で切りかえる。データベースが開けないときは、起動時に「管理」を開く。
+- コマンド：`get_settings`、`save_setting`（`key`、`value`。保存後にデータベースを開きなおす）、`check_environment`、`run_sync`、`import_claude_ai_export`（`zip`）。
+- 環境の検査は読むだけ。pm2 は `bun` の隣、`PATH`、`~/.bun/bin`、`~/.cache/.bun/bin` から探し、`bun` で `pm2 jlist` を実行して `ai-chat-logs-sync` の登録を調べる。launchd は `~/Library/LaunchAgents/pm2.*.plist` の有無を見る。
+- 取り込み：`/bin/sh <リポジトリ>/bin/sync`。claude.ai のエクスポート：ファイルを選ぶ画面（`tauri-plugin-dialog`）で zip を選び、`bun <リポジトリ>/src/cli/claude-ai-export-convert.ts <zip>` の後に取り込みを実行する。どちらも `PATH` の先頭に `bun` のディレクトリを足し、CLI が使う設定を環境変数で渡す。同時に1つだけ実行する。終わったら、終了コードと出力の最後の20行を出し、データベースを開きなおす。
 
 ## 破棄したADR
 
