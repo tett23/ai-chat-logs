@@ -4,6 +4,7 @@ import { detectChange } from "./change.ts";
 import { extractFields } from "./extract.ts";
 import { isFileKind, isLineKind, type LineKind } from "./kinds.ts";
 import { splitCompleteLines } from "./lines.ts";
+import { indexTextsAfter, maxRecordRowid, rebuildSessions, sessionsAfter, sessionsOfFile } from "./summaries.ts";
 
 export type SourceEntry = { kind: string; path: string };
 export type ImportError = { path: string; message: string };
@@ -104,6 +105,7 @@ const importLines = (db: Database, kind: LineKind, path: string, now: string, ch
       markSeen(db, path, now);
       if (change === "unchanged") return 0;
       const source = change === "rewritten" ? insertSource(db, kind, path, stored.generation + 1, now) : stored;
+      const rowidBefore = maxRecordRowid(db);
       const insert = db.query(
         "INSERT INTO records (source_id, line_no, raw, imported_at, type, uuid, session_id, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       );
@@ -122,6 +124,10 @@ const importLines = (db: Database, kind: LineKind, path: string, now: string, ch
         `UPDATE sources SET consumed_bytes = ?, consumed_lines = ?, head_sha256 = ?, size = ?, mtime_ms = ?, last_seen_at = ?
          WHERE id = ?`,
       ).run(totals.bytes, totals.lines, headHash(path, totals.bytes), size, Math.trunc(mtimeMs), now, source.id);
+      if (totals.added > 0) {
+        indexTextsAfter(db, rowidBefore);
+        rebuildSessions(db, sessionsAfter(db, rowidBefore));
+      }
       return totals.added;
     })
     .immediate();
@@ -135,7 +141,10 @@ const importFile = (db: Database, kind: string, path: string, now: string): numb
       const hash = sha256(content);
       const source = latestSource(db, path) ?? insertSource(db, kind, path, 0, now);
       const added = db.query("INSERT OR IGNORE INTO blobs (sha256, size, content) VALUES (?, ?, ?)").run(hash, content.length, content).changes;
-      db.query("INSERT OR IGNORE INTO file_versions (source_id, sha256, first_seen_at) VALUES (?, ?, ?)").run(source.id, hash, now);
+      const versionAdded = db
+        .query("INSERT OR IGNORE INTO file_versions (source_id, sha256, first_seen_at) VALUES (?, ?, ?)")
+        .run(source.id, hash, now).changes;
+      if (versionAdded > 0) rebuildSessions(db, sessionsOfFile(kind, content));
       db.query("UPDATE sources SET size = ?, mtime_ms = ? WHERE id = ?").run(size, Math.trunc(mtimeMs), source.id);
       markSeen(db, path, now);
       return added;

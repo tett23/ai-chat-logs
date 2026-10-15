@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
+import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
 
 // docs/adr/0001: migrations are applied in order; PRAGMA user_version holds the applied count.
-const MIGRATIONS: readonly string[] = [initial];
+const MIGRATIONS: readonly string[] = [initial, searchAndSummaries];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
