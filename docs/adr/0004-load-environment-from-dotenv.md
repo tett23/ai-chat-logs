@@ -1,6 +1,6 @@
 # ADR 0004: .env から環境変数を読む
 
-ステータス: 採択→設定ファイルからの読み込みは[ADR 0007](0007-settings-and-setup-screen.md)
+ステータス: 採択→設定ファイルからの読み込みは[ADR 0007](0007-settings-and-setup-screen.md)、実行ファイルでのリポジトリの場所は[ADR 0008](0008-install-compiled-commands.md)
 
 ## 文脈
 
