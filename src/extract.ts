@@ -29,12 +29,22 @@ const epochMsToIso = (value: unknown): string | null => {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 };
 
+const transcript = (r: JsonObject): Fields => ({
+  type: str(r.type),
+  uuid: str(r.uuid),
+  sessionId: str(r.sessionId),
+  timestamp: str(r.timestamp),
+});
+
 const EXTRACTORS: Record<LineKind, (record: JsonObject) => Fields> = {
-  "claude-code/transcript": (r) => ({
+  "claude-code/transcript": transcript,
+  "claude-cowork/transcript": transcript,
+  "claude-ai/conversation": transcript,
+  "claude-cowork/audit": (r) => ({
     type: str(r.type),
     uuid: str(r.uuid),
-    sessionId: str(r.sessionId),
-    timestamp: str(r.timestamp),
+    sessionId: str(r.session_id),
+    timestamp: str(r._audit_timestamp),
   }),
   "claude-code/history": (r) => ({
     type: null,

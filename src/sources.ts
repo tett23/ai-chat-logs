@@ -1,8 +1,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { classifyClaudeCodePath, classifyDesktopPath } from "./classify.ts";
+import { classifyClaudeAiPath, classifyClaudeCodePath, classifyDesktopPath } from "./classify.ts";
 import type { Kind } from "./kinds.ts";
-import { claudeConfigDir, desktopAppDir } from "./paths.ts";
+import { claudeAiDir, claudeConfigDir, desktopAppDir } from "./paths.ts";
 
 export type Source = { kind: Kind; path: string };
 
@@ -45,5 +45,9 @@ export const listSources = (env: Record<string, string | undefined>): Source[] =
     ...historyFile(config),
     ...classifyUnder(join(config, "projects"), (rel) => classifyClaudeCodePath(`projects/${rel}`)),
     ...classifyUnder(join(desktopAppDir(env), "claude-code-sessions"), (rel) => classifyDesktopPath(`claude-code-sessions/${rel}`)),
+    ...classifyUnder(join(desktopAppDir(env), "local-agent-mode-sessions"), (rel) =>
+      classifyDesktopPath(`local-agent-mode-sessions/${rel}`),
+    ),
+    ...classifyUnder(claudeAiDir(env), classifyClaudeAiPath),
   ].sort(byPath);
 };

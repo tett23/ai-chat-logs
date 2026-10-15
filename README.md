@@ -1,7 +1,7 @@
 # ai-chat-logs
 
 AI のチャット履歴を SQLite に書き出し、定期的に保存するためのツール群。
-いまは Claude（Claude Code とデスクトップアプリの Code タブ）の履歴に対応する。スキーマは、Claude 以外の AI の履歴も入れられる形にしてある。
+いまは Claude の履歴に対応する。Claude Code（デスクトップアプリの Code タブを含む）と Cowork は自動で、claude.ai のチャットは公式のエクスポートから取り込む。スキーマは、Claude 以外の AI の履歴も入れられる形にしてある。
 
 Claude Code は、既定で30日を過ぎたセッションの履歴を削除する。
 このツールは、手元の履歴（`~/.claude/projects` の JSONL など）を差分で SQLite に取り込み、元のファイルが消えても取り込み済みの行を残す。
@@ -30,9 +30,19 @@ Claude Code は、既定で30日を過ぎたセッションの履歴を削除す
 
 5 と 6 をしないと、再起動の後に取り込みが黙って止まる（下の「定期的に取り込む」を参照）。
 
+### claude.ai の会話を取り込むとき
+
+claude.ai（Web とデスクトップアプリのチャット）の会話は手元に無いため、公式のエクスポートから取り込む（[ADR 0006](docs/adr/0006-import-cowork-and-claude-ai-chats.md)）。自動では最新にならないので、取り込みたいときに繰り返す。
+
+1. claude.ai の設定 → Privacy → Export data でエクスポートを要求する。届いたメールのリンクから zip をダウンロードする。
+2. zip を変換する：`bun src/cli/claude-ai-export-convert.ts <zip>`。元のファイルと変換した `messages.jsonl` が `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai/<ID>/` に置かれる（場所は `AI_CHAT_LOGS_CLAUDE_AI_DIR` で変えられる）。
+3. 次の取り込み（pm2 の定期実行か `bin/sync`）で、データベースに入る。
+
+何度エクスポートしても、同じメッセージは会話・検索・件数に1回だけ出る。
+
 ### 設定を変えたとき
 
-- `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME` は、次の取り込みから効く。登録しなおす必要は無い。
+- `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME`、`AI_CHAT_LOGS_CLAUDE_AI_DIR` は、次の取り込みから効く。登録しなおす必要は無い。
 - `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
 ### リポジトリを更新したとき
@@ -111,6 +121,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `AI_CHAT_LOGS_DB` | データベースのパス | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` |
 | `XDG_DATA_HOME` | データベースの既定の場所の基準 | `~/.local/share` |
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ | `~/.claude` |
+| `AI_CHAT_LOGS_CLAUDE_AI_DIR` | claude.ai のエクスポートの保存用のディレクトリ | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai` |
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 * * * *` |
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
 
@@ -152,7 +163,7 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 
 - 必要なもの：Rust（stable）と、Tauri の前提のライブラリ（macOS では Xcode の Command Line Tools）。
 - データベースは `AI_CHAT_LOGS_DB`、無ければ `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` を開く。GUI は `.env` を読まない。Finder から起動したアプリには環境変数が渡らないため、既定以外の場所は `open --env AI_CHAT_LOGS_DB=<パス> "AI Chat Logs.app"` のように渡す。
-- 左にセッションの一覧、上に検索の入力欄、右に会話を出す。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
+- 左にセッションの一覧、上に検索の入力欄、右に会話を出す。プロジェクトの絞り込みで、Claude Code のプロジェクトのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 
 ## 開発

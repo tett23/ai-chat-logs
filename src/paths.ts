@@ -11,5 +11,10 @@ export const claudeConfigDir = (env: Env): string => env.CLAUDE_CONFIG_DIR || jo
 
 export const desktopAppDir = (env: Env): string => join(home(env), "Library/Application Support/Claude");
 
-export const defaultDatabasePath = (env: Env): string =>
-  env.AI_CHAT_LOGS_DB || join(env.XDG_DATA_HOME || join(home(env), ".local/share"), "ai-chat-logs/logs.sqlite");
+const dataHome = (env: Env): string => env.XDG_DATA_HOME || join(home(env), ".local/share");
+
+export const defaultDatabasePath = (env: Env): string => env.AI_CHAT_LOGS_DB || join(dataHome(env), "ai-chat-logs/logs.sqlite");
+
+// docs/adr/0006: where claude-ai-export-convert keeps exports and converted messages.
+export const claudeAiDir = (env: Env): string => env.AI_CHAT_LOGS_CLAUDE_AI_DIR || join(dataHome(env), "ai-chat-logs/claude-ai");
+
