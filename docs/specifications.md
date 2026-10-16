@@ -178,6 +178,13 @@ ai-chat-logs の現行の仕様をまとめる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
 - `ai-chat-logs-sync`：同じディレクトリの `claude-log-sources` の出力を一度受けてから、`chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。
 
+## ADR の保護
+
+[ADR 0009](adr/0009-update-adr-guard-to-v0-8-2.md)
+
+- コミット済みの ADR の変更は、adr-guard で拒否する。pre-commit の hook（`.githooks/pre-commit`）は `adr-guard pre-commit --allow-status --allow-links`、CI の `adr` ジョブは `tett23/adr-guard@v0.8.2`（`allow-status: true`、`allow-links: true`）。
+- 許可するのは、ステータスの行の変更と、リンクだけの変更（リンクの追加・削除・リンク先の変更、画像のリンク先、リンクの参照定義の行）。リンクのテキスト、画像の追加・削除、自動リンクや本文の URL の変更は拒否する。
+
 ## 破棄したADR
 
 なし
