@@ -1,6 +1,6 @@
 # ADR 0008: コマンドを実行ファイルにビルドして ~/.local/bin に入れる
 
-ステータス: 採択
+ステータス: 採択→claude-ai-export-scan のインストールは[ADR 0010](0010-scan-downloads-for-claude-ai-exports.md)
 
 ## 文脈
 
