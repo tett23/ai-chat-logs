@@ -19,3 +19,6 @@ export const defaultDatabasePath = (env: Env): string => env.AI_CHAT_LOGS_DB || 
 // docs/adr/0006: where claude-ai-export-convert keeps exports and converted messages.
 export const claudeAiDir = (env: Env): string => env.AI_CHAT_LOGS_CLAUDE_AI_DIR || join(dataHome(env), "ai-chat-logs/claude-ai");
 
+// docs/adr/0010: where claude-ai-export-scan looks for downloaded exports.
+export const claudeAiInbox = (env: Env): string => env.AI_CHAT_LOGS_CLAUDE_AI_INBOX || join(home(env), "Downloads");
+

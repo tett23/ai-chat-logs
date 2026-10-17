@@ -93,3 +93,8 @@ export const checkEnvironment = () => invoke<EnvironmentCheck>("check_environmen
 export const runSync = () => invoke<RunResult>("run_sync");
 export const importClaudeAiExport = (zip: string) => invoke<RunResult>("import_claude_ai_export", { zip });
 
+// docs/adr/0010
+export type { ScanResult } from "./scan.ts";
+import type { ScanResult } from "./scan.ts";
+export const scanClaudeAiExports = () => invoke<ScanResult>("scan_claude_ai_exports");
+

@@ -1,6 +1,6 @@
 # ADR 0006: Cowork と claude.ai の会話を取り込んで検索する
 
-ステータス: 採択
+ステータス: 採択→ダウンロードしたエクスポートの自動の変換は[ADR 0010](0010-scan-downloads-for-claude-ai-exports.md)
 
 ## 文脈
 

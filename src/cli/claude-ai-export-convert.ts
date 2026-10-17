@@ -1,15 +1,13 @@
 #!/usr/bin/env -S bun --no-env-file
 // docs/adr/0006: copy a claude.ai export and convert it to messages.jsonl for chat-log-import.
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { convertConversations, exportId } from "../claude-ai.ts";
+import { EXPORT_FILES, storeExport } from "../claude-ai-store.ts";
 import { loadEnvFile } from "../env.ts";
 import { claudeAiDir } from "../paths.ts";
 
 loadEnvFile();
-
-const EXPORT_FILES = ["conversations.json", "projects.json", "users.json"] as const;
 
 const fail = (message: string): never => {
   console.error(`claude-ai-export-convert: ${message}`);
@@ -39,26 +37,16 @@ const temp = input.endsWith(".zip") ? unzip(input) : null;
 try {
   const root = temp ?? (statSync(input).isDirectory() ? input : dirname(input));
   const source = exportDir(root) ?? fail(`conversations.json not found in ${input}`);
-  const text = await Bun.file(join(source, "conversations.json")).text();
-  const lines = (() => {
+  const files = Object.fromEntries(
+    EXPORT_FILES.filter((name) => existsSync(join(source, name))).map((name) => [name, readFileSync(join(source, name))]),
+  ) as Parameters<typeof storeExport>[1];
+  const out = (() => {
     try {
-      return convertConversations(JSON.parse(text));
+      return storeExport(claudeAiDir(process.env), files);
     } catch (e) {
       return fail(`invalid conversations.json: ${e instanceof Error ? e.message : String(e)}`);
     }
   })();
-
-  const out = join(claudeAiDir(process.env), exportId(text));
-  mkdirSync(out, { recursive: true });
-  EXPORT_FILES.filter((name) => existsSync(join(source, name)) && !existsSync(join(out, name))).forEach((name) =>
-    copyFileSync(join(source, name), join(out, name)),
-  );
-  const messages = join(out, "messages.jsonl");
-  if (!existsSync(messages)) {
-    const partial = `${messages}.tmp`;
-    writeFileSync(partial, lines.map((l) => `${l}\n`).join(""));
-    renameSync(partial, messages);
-  }
   console.log(out);
 } finally {
   if (temp) rmSync(temp, { recursive: true, force: true });

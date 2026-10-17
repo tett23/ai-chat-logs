@@ -13,7 +13,8 @@ ai-chat-logs の現行の仕様をまとめる。
 |---|---|---|
 | `claude-log-sources`（`src/cli/sources.ts`） | なし | Claude の取り込む対象の、`<種類><タブ><絶対パス>` の行（パスの順） |
 | `chat-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
-| `bin/sync` | なし | 上の2つを順に実行する。列挙に失敗したら取り込まない |
+| `claude-ai-export-scan`（`src/cli/claude-ai-export-scan.ts`） | なし | 受け取り用のディレクトリの新しい claude.ai のエクスポートを変換し、出力先を1行ずつ書く（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)） |
+| `bin/sync` | なし | `claude-ai-export-scan`、列挙、取り込みを順に実行する。列挙に失敗したら取り込まない。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す |
 
 `chat-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
 
@@ -105,6 +106,15 @@ ai-chat-logs の現行の仕様をまとめる。
 - `conversations.json` が無い、JSON でない、配列でないときは、終了コード1で終わり、何も書かない。
 - `messages.jsonl`：会話を `created_at`、`uuid` の順に、名前があれば `{"type":"custom-title","customTitle","sessionId"}` の行、続けて各メッセージを `{"type","uuid","parentUuid","sessionId","timestamp","message":{"role","content"},"claudeAi":{"conversation","sender","attachments","files"}}` の行にする。`sender` が `human` なら `user`。`content` が空なら `text` から1つのテキストのブロックを作る。
 
+### ダウンロードしたエクスポートの自動の変換
+
+[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)
+
+- 受け取り用のディレクトリ：`AI_CHAT_LOGS_CLAUDE_AI_INBOX`（環境変数、`.env`、設定ファイル）、無ければ `~/Downloads`。
+- 直下の `*.zip` を名前の順に見る。中身の一覧（`unzip -Z1`）に、ルートか1段下の `conversations.json` があるものをエクスポートとみなす。
+- `conversations.json` を展開せずに読み（`unzip -p`）、`<AI_CHAT_LOGS_CLAUDE_AI_DIR>/<SHA-256 の先頭16文字>/messages.jsonl` が既にあれば飛ばす。無ければ `claude-ai-export-convert` と同じ変換で置く（同じ階層の `projects.json`、`users.json` も写す）。
+- zip ごとの失敗と、受け取り用のディレクトリを読めないこと（TCC の拒否を含む）は標準エラー出力に書き、終了コードを1にする。受け取り用のディレクトリが無ければ何もしない。zip は消さない。
+
 ## GUI
 
 [ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
@@ -113,6 +123,7 @@ ai-chat-logs の現行の仕様をまとめる。
 - データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`（環境変数、`.env`、設定ファイルの順。[ADR 0007](adr/0007-settings-and-setup-screen.md)）、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
 - コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_session`（`session_id`。パス・`generation`・行番号の順）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順）。
 - プロジェクトの絞り込み：Claude Code は `cwd` ごと、ほかの提供元は提供元ごとに1項目。一覧と検索の結果に、Claude Code 以外の提供元の名前を出す。
+- 閲覧の画面の、プロジェクトの絞り込みの下に「ダウンロードしたエクスポートを取り込む」（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)）。コマンド `scan_claude_ai_exports` で `claude-ai-export-scan` と `bin/sync` を実行し、結果（取り込んだ件数、新しいものが無い旨、失敗と終了コード）を短く出し、詳しい出力を折りたたんで出す。終わったらプロジェクトの絞り込み（選択は保つ）とセッションの一覧を読みなおし、開いている会話はそのままにする。ボタンの `title` に受け取り用のディレクトリを出す。
 - 検索：空白で区切った語のうち、3文字以上の語は二重引用符で囲んだ FTS5 の語として AND でつなぎ、3文字未満の語は `LIKE`（`%`、`_`、`\` をエスケープ）で絞る。抜粋は、FTS5 の `snippet()`、3文字未満の語だけのときは本文から最初の一致の前後32文字を切り出したもの。強調は U+E000 と U+E001 で囲む。
 - `get_session` のブロックのうち、`thinking`、`tool_use`、`tool_result`、その他の本文は、4,000 文字を超えたら先頭の 4,000 文字と元の文字数を返す。
 - 画面：本文はプレーンテキスト。` ``` ` で囲まれた部分だけ等幅にする。`thinking`、`tool_use`、`tool_result`、サイドチェーンのレコードは折りたたみ、開いたときに中身を組み立てる。文字列は HTML として解釈させない。
@@ -156,7 +167,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`AI_CHAT_LOGS_CONFIG`、無ければ `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env`。書式は `.env` と同じ。
 - 優先順位：環境変数、`.env`、設定ファイル、既定。CLI、`ecosystem.config.cjs`、GUI のすべてが、この順で読む。
-- GUI の管理画面が書くのは設定ファイルだけ。項目は `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_REPO`、`AI_CHAT_LOGS_BUN`。
+- GUI の管理画面が書くのは設定ファイルだけ。項目は `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_INBOX`、`AI_CHAT_LOGS_REPO`、`AI_CHAT_LOGS_BUN`。
 - 書き方：`名前="値"`（`\` と `"` を逃がす）。改行を含む値は保存しない。最初の行を書きかえ、同じ名前の2行目以降を消す。空の値で保存するとその名前の行を消す。ほかの行は残す。一時ファイルから名前を変えて置きかえる。
 - `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`（既定は `~/Library/Application Support/Claude`）は、CLI の列挙でも使う。`AI_CHAT_LOGS_REPO`（既定は GUI をビルドしたリポジトリ）と `AI_CHAT_LOGS_BUN` は GUI だけが使う。
 - GUI の `bun` の探し方：`AI_CHAT_LOGS_BUN`、`PATH`、`~/.bun/bin/bun`、`~/.local/share/mise/shims/bun`、`/opt/homebrew/bin/bun`、`/usr/local/bin/bun` の順で、最初に実行できるもの。
@@ -174,9 +185,9 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0008](adr/0008-install-compiled-commands.md)
 
-- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
+- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
-- `ai-chat-logs-sync`：同じディレクトリの `claude-log-sources` の出力を一度受けてから、`chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。
+- `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` を実行してから、`claude-log-sources` の出力を一度受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す。
 
 ## ADR の保護
 

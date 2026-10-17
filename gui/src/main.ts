@@ -4,6 +4,7 @@ import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
 import { splitFences } from "./fences.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
+import { scanMessage } from "./scan.ts";
 import { splitSnippet } from "./snippet.ts";
 
 const PAGE = 50;
@@ -30,9 +31,26 @@ const notice = h("div", { class: "text-xs text-gray-500" });
 const projectSelect = h("select", { class: "w-full rounded border border-gray-300 px-1 py-1" });
 const list = h("ul", { class: "flex-1 overflow-y-auto divide-y divide-gray-100" });
 const view = h("section", { class: "flex-1 overflow-y-auto p-4" });
+// docs/adr/0010: kept on the browse screen, away from the setup buttons of the admin screen.
+const scanButton = h(
+  "button",
+  { class: "whitespace-nowrap rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-50" },
+  ["ダウンロードしたエクスポートを取り込む"],
+);
+const scanStatus = h("div", { class: "text-xs text-gray-600" });
+const scanDetails = h("details", { class: "hidden text-xs" }, [
+  h("summary", { class: "cursor-pointer select-none text-gray-500" }, ["詳しく"]),
+  h("pre", { class: "mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded bg-gray-100 p-1 font-mono" }),
+]);
+
 const browse = h("main", { class: "flex min-h-0 flex-1" }, [
   h("aside", { class: "flex w-96 flex-col border-r border-gray-200" }, [
-    h("div", { class: "border-b border-gray-200 p-2" }, [projectSelect]),
+    h("div", { class: "flex flex-col gap-1 border-b border-gray-200 p-2" }, [
+      projectSelect,
+      h("div", {}, [scanButton]),
+      scanStatus,
+      scanDetails,
+    ]),
     list,
   ]),
   view,
@@ -299,6 +317,51 @@ const showTab = (tab: "browse" | "admin"): void => {
 browseTab.addEventListener("click", () => showTab("browse"));
 adminTab.addEventListener("click", () => showTab("admin"));
 
+// Rebuilds the project filter, keeping the selected entry when it still exists.
+const loadProjects = async (): Promise<void> => {
+  const selected = projectSelect.value;
+  const projects = await api.listProjects();
+  const options = projectOptions(projects).map((o) => JSON.stringify(o.filter));
+  clear(
+    projectSelect,
+    h("option", { attrs: { value: "" } }, ["すべてのプロジェクト"]),
+    ...projectOptions(projects).map((o) => h("option", { attrs: { value: JSON.stringify(o.filter) } }, [o.label])),
+  );
+  projectSelect.value = options.includes(selected) ? selected : "";
+  state.filter = projectSelect.value === "" ? null : (JSON.parse(projectSelect.value) as Filter);
+};
+
+const showInbox = (): void => {
+  void api
+    .getSettings()
+    .then((v) => {
+      const inbox = v.settings.find((s) => s.key === "AI_CHAT_LOGS_CLAUDE_AI_INBOX")?.value;
+      scanButton.title = inbox ? `受け取り用のディレクトリ: ${inbox}` : "";
+    })
+    .catch(() => undefined);
+};
+
+scanButton.addEventListener("click", () => {
+  scanButton.disabled = true;
+  scanStatus.textContent = "取り込み中…";
+  scanDetails.classList.add("hidden");
+  api
+    .scanClaudeAiExports()
+    .then(async (r) => {
+      scanStatus.textContent = scanMessage(r);
+      (scanDetails.querySelector("pre") as HTMLElement).textContent = [...r.imported, r.output].filter((t) => t !== "").join("\n");
+      scanDetails.classList.remove("hidden");
+      await loadProjects();
+      resetList();
+    })
+    .catch((e) => {
+      scanStatus.textContent = typeof e === "object" && e !== null && "kind" in e ? errorText(e as api.StoreError) : String(e);
+    })
+    .finally(() => {
+      scanButton.disabled = false;
+    });
+});
+
 const start = async (): Promise<void> => {
   const s = await api.status();
   if (s.error) {
@@ -309,12 +372,8 @@ const start = async (): Promise<void> => {
     return;
   }
   notice.textContent = "";
-  const projects = await api.listProjects();
-  clear(
-    projectSelect,
-    h("option", { attrs: { value: "" } }, ["すべてのプロジェクト"]),
-    ...projectOptions(projects).map((o) => h("option", { attrs: { value: JSON.stringify(o.filter) } }, [o.label])),
-  );
+  await loadProjects();
+  showInbox();
   clear(view, h("p", { class: "text-gray-500" }, [`データベース: ${s.path ?? ""}`]));
   resetList();
 };

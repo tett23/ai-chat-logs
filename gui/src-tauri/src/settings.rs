@@ -9,14 +9,30 @@ pub const DB: &str = "AI_CHAT_LOGS_DB";
 pub const CLAUDE_CONFIG_DIR: &str = "CLAUDE_CONFIG_DIR";
 pub const DESKTOP_DIR: &str = "AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR";
 pub const CLAUDE_AI_DIR: &str = "AI_CHAT_LOGS_CLAUDE_AI_DIR";
+/// docs/adr/0010: where downloaded claude.ai exports are picked up.
+pub const CLAUDE_AI_INBOX: &str = "AI_CHAT_LOGS_CLAUDE_AI_INBOX";
 pub const REPO: &str = "AI_CHAT_LOGS_REPO";
 pub const BUN: &str = "AI_CHAT_LOGS_BUN";
 
 /// The settings shown and edited on the settings screen, in display order.
-pub const KEYS: [&str; 6] = [DB, CLAUDE_CONFIG_DIR, DESKTOP_DIR, CLAUDE_AI_DIR, REPO, BUN];
+pub const KEYS: [&str; 7] = [
+    DB,
+    CLAUDE_CONFIG_DIR,
+    DESKTOP_DIR,
+    CLAUDE_AI_DIR,
+    CLAUDE_AI_INBOX,
+    REPO,
+    BUN,
+];
 
 /// Settings passed to the CLI commands as environment variables.
-pub const CLI_KEYS: [&str; 4] = [DB, CLAUDE_CONFIG_DIR, DESKTOP_DIR, CLAUDE_AI_DIR];
+pub const CLI_KEYS: [&str; 5] = [
+    DB,
+    CLAUDE_CONFIG_DIR,
+    DESKTOP_DIR,
+    CLAUDE_AI_DIR,
+    CLAUDE_AI_INBOX,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +97,7 @@ pub fn resolve(layers: &Layers, repo_default: &Path, bun_default: Option<&Path>)
             CLAUDE_AI_DIR => data_home
                 .clone()
                 .map(|d| text(d.join("ai-chat-logs/claude-ai"))),
+            CLAUDE_AI_INBOX => home.clone().map(|h| text(h.join("Downloads"))),
             REPO => Some(text(repo_default.to_path_buf())),
             BUN => bun_default.map(|b| text(b.to_path_buf())),
             _ => None,
@@ -253,6 +270,7 @@ mod tests {
             get(CLAUDE_AI_DIR).value.as_deref(),
             Some("/data/ai-chat-logs/claude-ai")
         );
+        assert_eq!(get(CLAUDE_AI_INBOX).value.as_deref(), Some("/h/Downloads"));
         assert_eq!(get(REPO).value.as_deref(), Some("/repo"));
         assert_eq!(get(BUN).value.as_deref(), Some("/bin/bun"));
         assert_eq!(

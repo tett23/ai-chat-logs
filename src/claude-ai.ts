@@ -6,8 +6,8 @@ const isObject = (v: unknown): v is JsonObject => typeof v === "object" && v !==
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
-export const exportId = (conversationsText: string): string =>
-  new Bun.CryptoHasher("sha256").update(conversationsText).digest("hex").slice(0, 16);
+export const exportId = (conversations: string | Uint8Array): string =>
+  new Bun.CryptoHasher("sha256").update(conversations).digest("hex").slice(0, 16);
 
 const role = (sender: string | null): string => (sender === "human" ? "user" : (sender ?? "user"));
 

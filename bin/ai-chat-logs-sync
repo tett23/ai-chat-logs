@@ -1,9 +1,15 @@
 #!/bin/sh
-# docs/adr/0008: bin/sync for the executables installed by bin/install next to this script.
+# docs/adr/0008, docs/adr/0010: bin/sync for the executables installed by bin/install next to this script.
 set -eu
 
 dir=$(cd "$(dirname "$0")" && pwd)
+status=0
+
+# A failed scan is reported but does not stop the import.
+"$dir/claude-ai-export-scan" >&2 || status=1
 
 # Collect the whole list first so that a failed listing never marks sources as missing.
 sources=$("$dir/claude-log-sources")
-printf '%s\n' "$sources" | "$dir/chat-log-import" --mark-missing "$@"
+printf '%s\n' "$sources" | "$dir/chat-log-import" --mark-missing "$@" || status=1
+
+exit "$status"

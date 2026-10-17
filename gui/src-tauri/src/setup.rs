@@ -50,6 +50,32 @@ pub fn sync_command(settings: &[Setting], path: Option<&str>) -> Result<CommandS
     })
 }
 
+/// docs/adr/0010: `claude-ai-export-scan` with the same environment as sync_command.
+pub fn scan_command(settings: &[Setting], path: Option<&str>) -> Result<CommandSpec, String> {
+    let bun = required(settings, settings::BUN, "bun")?;
+    let repo = required(settings, settings::REPO, "the repository")?;
+    Ok(CommandSpec {
+        program: PathBuf::from(bun),
+        args: vec![
+            Path::new(repo)
+                .join("src/cli/claude-ai-export-scan.ts")
+                .to_string_lossy()
+                .into_owned(),
+        ],
+        env: command_env(settings, Path::new(bun), path),
+    })
+}
+
+/// The export directories `claude-ai-export-scan` printed, one per line.
+pub fn scanned_exports(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// `claude-ai-export-convert <zip>` with the same environment as sync_command.
 pub fn convert_command(
     settings: &[Setting],
@@ -214,6 +240,7 @@ mod tests {
             setting(settings::CLAUDE_CONFIG_DIR, "/h/.claude"),
             setting(settings::DESKTOP_DIR, "/h/desk"),
             setting(settings::CLAUDE_AI_DIR, "/d/claude-ai"),
+            setting(settings::CLAUDE_AI_INBOX, "/h/Downloads"),
             setting(settings::REPO, "/repo"),
             setting(settings::BUN, "/tools/bin/bun"),
         ]
@@ -238,6 +265,10 @@ mod tests {
                     settings::CLAUDE_AI_DIR.to_string(),
                     "/d/claude-ai".to_string()
                 ),
+                (
+                    settings::CLAUDE_AI_INBOX.to_string(),
+                    "/h/Downloads".to_string()
+                ),
             ]
         );
     }
@@ -254,6 +285,26 @@ mod tests {
             ]
         );
         assert_eq!(spec.env[0], ("PATH".to_string(), "/tools/bin".to_string()));
+    }
+
+    #[test]
+    fn builds_the_scan_command() {
+        let spec = scan_command(&sample(), Some("/usr/bin")).unwrap();
+        assert_eq!(spec.program, PathBuf::from("/tools/bin/bun"));
+        assert_eq!(spec.args, vec!["/repo/src/cli/claude-ai-export-scan.ts"]);
+        assert_eq!(
+            spec.env,
+            sync_command(&sample(), Some("/usr/bin")).unwrap().env
+        );
+    }
+
+    #[test]
+    fn parses_the_directories_printed_by_the_scan() {
+        assert_eq!(
+            scanned_exports("/d/claude-ai/aaaa\n\n/d/claude-ai/bbbb\n"),
+            vec!["/d/claude-ai/aaaa", "/d/claude-ai/bbbb"]
+        );
+        assert_eq!(scanned_exports(""), Vec::<String>::new());
     }
 
     #[test]
