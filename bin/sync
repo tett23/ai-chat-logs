@@ -1,5 +1,6 @@
 #!/bin/sh
-# docs/adr/0001, docs/adr/0002, docs/adr/0004: list the sources, then import them.
+# docs/adr/0001, docs/adr/0002, docs/adr/0004, docs/adr/0010:
+# convert downloaded claude.ai exports, list the sources, then import them.
 set -eu
 
 if ! command -v bun >/dev/null 2>&1; then
@@ -8,8 +9,14 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 
 root=$(cd "$(dirname "$0")/.." && pwd)
+status=0
+
+# --no-env-file: the CLIs read the repository .env themselves, never the one in the working directory.
+# A failed scan is reported but does not stop the import.
+bun --no-env-file "$root/src/cli/claude-ai-export-scan.ts" >&2 || status=1
 
 # Collect the whole list first so that a failed listing never marks sources as missing.
-# --no-env-file: the CLIs read the repository .env themselves, never the one in the working directory.
 sources=$(bun --no-env-file "$root/src/cli/sources.ts")
-printf '%s\n' "$sources" | bun --no-env-file "$root/src/cli/import.ts" --mark-missing "$@"
+printf '%s\n' "$sources" | bun --no-env-file "$root/src/cli/import.ts" --mark-missing "$@" || status=1
+
+exit "$status"

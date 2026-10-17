@@ -385,31 +385,41 @@ struct RunResult {
     output: String,
 }
 
-fn execute(spec: &setup::CommandSpec, cwd: Option<&str>) -> Result<RunResult, StoreError> {
+fn capture(
+    spec: &setup::CommandSpec,
+    cwd: Option<&str>,
+) -> Result<std::process::Output, StoreError> {
     let mut command = std::process::Command::new(&spec.program);
     command.args(&spec.args).envs(spec.env.iter().cloned());
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
-    let output = command
+    command
         .output()
-        .map_err(|e| settings_error(format!("{}: {e}", spec.program.display())))?;
+        .map_err(|e| settings_error(format!("{}: {e}", spec.program.display())))
+}
+
+fn to_run_result(output: &std::process::Output) -> RunResult {
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(RunResult {
+    RunResult {
         exit_code: output.status.code(),
         output: setup::tail(&text, 20),
-    })
+    }
+}
+
+fn execute(spec: &setup::CommandSpec, cwd: Option<&str>) -> Result<RunResult, StoreError> {
+    capture(spec, cwd).map(|o| to_run_result(&o))
 }
 
 /// Runs `f` unless another command is running, then reopens the database.
-fn exclusive(
+fn exclusive<T>(
     state: &AppState,
-    f: impl FnOnce(&[Setting]) -> CommandResult<RunResult>,
-) -> CommandResult<RunResult> {
+    f: impl FnOnce(&[Setting]) -> CommandResult<T>,
+) -> CommandResult<T> {
     if state.running.swap(true, Ordering::SeqCst) {
         return Err(settings_error("別の処理を実行中です"));
     }
@@ -454,6 +464,40 @@ fn import_claude_ai_export(
     })
 }
 
+#[derive(Serialize)]
+struct ScanResult {
+    /// Export directories converted by this scan.
+    imported: Vec<String>,
+    scan_exit_code: Option<i32>,
+    /// The exit code of bin/sync.
+    exit_code: Option<i32>,
+    output: String,
+}
+
+/// docs/adr/0010: convert downloaded claude.ai exports, then import.
+#[tauri::command(async)]
+fn scan_claude_ai_exports(state: tauri::State<'_, AppState>) -> CommandResult<ScanResult> {
+    let path = std::env::var("PATH").ok();
+    exclusive(&state, |s| {
+        let repo = settings::value(s, settings::REPO);
+        let scan = capture(
+            &setup::scan_command(s, path.as_deref()).map_err(settings_error)?,
+            repo,
+        )?;
+        let sync = execute(
+            &setup::sync_command(s, path.as_deref()).map_err(settings_error)?,
+            repo,
+        )?;
+        let scan_text = to_run_result(&scan).output;
+        Ok(ScanResult {
+            imported: setup::scanned_exports(&String::from_utf8_lossy(&scan.stdout)),
+            scan_exit_code: scan.status.code(),
+            exit_code: sync.exit_code,
+            output: setup::tail(&format!("{scan_text}\n{}", sync.output), 20),
+        })
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -472,7 +516,8 @@ fn main() {
             save_setting,
             check_environment,
             run_sync,
-            import_claude_ai_export
+            import_claude_ai_export,
+            scan_claude_ai_exports
         ])
         .run(tauri::generate_context!())
         .expect("error while running the application");

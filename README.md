@@ -34,15 +34,21 @@ Claude Code は、既定で30日を過ぎたセッションの履歴を削除す
 
 claude.ai（Web とデスクトップアプリのチャット）の会話は手元に無いため、公式のエクスポートから取り込む（[ADR 0006](docs/adr/0006-import-cowork-and-claude-ai-chats.md)）。自動では最新にならないので、取り込みたいときに繰り返す。
 
-1. claude.ai の設定 → Privacy → Export data でエクスポートを要求する。届いたメールのリンクから zip をダウンロードする。
-2. zip を変換する：`bun src/cli/claude-ai-export-convert.ts <zip>`。GUI の管理画面の「claude.ai のエクスポートを取り込む」でも、変換と取り込みをまとめて行える。元のファイルと変換した `messages.jsonl` が `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai/<ID>/` に置かれる（場所は `AI_CHAT_LOGS_CLAUDE_AI_DIR` で変えられる）。
-3. 次の取り込み（pm2 の定期実行か `bin/sync`）で、データベースに入る。
+1. claude.ai の設定 → Privacy → Export data でエクスポートを要求する。
+2. 届いたメールのリンクから zip をダウンロードする（ダウンロードフォルダに置く）。
+3. あとは次の取り込み（pm2 の毎時の定期実行か `bin/sync`）で、自動で変換されてデータベースに入る（[ADR 0010](docs/adr/0010-scan-downloads-for-claude-ai-exports.md)）。すぐに取り込みたいときは、GUI の閲覧の画面の「ダウンロードしたエクスポートを取り込む」を押す。
+
+- 受け取り用のディレクトリは `AI_CHAT_LOGS_CLAUDE_AI_INBOX`（既定は `~/Downloads`）で変えられる。直下の zip のうち、中に `conversations.json` があるものをエクスポートとみなす。名前は問わない。
+- 取り込み済みかどうかは中身で見分けるので、zip を残しておいても二重には入らない。zip は消さない。
+- 元のファイルと変換した `messages.jsonl` は `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai/<ID>/` に置かれる（場所は `AI_CHAT_LOGS_CLAUDE_AI_DIR` で変えられる）。
+- 手で変換することもできる：`bun src/cli/claude-ai-export-convert.ts <zip か conversations.json>`。GUI の管理画面の「claude.ai のエクスポートを取り込む」では、zip を選んで取り込める。
+- macOS はダウンロードフォルダをプライバシー保護（TCC）の対象にしているため、pm2 の定期実行から読めないことがある。`pm2 logs ai-chat-logs-sync` に `cannot read` と `Operation not permitted` が出たら、受け取り用のディレクトリをダウンロードフォルダ以外にして zip をそこへ置くか、システム設定 → プライバシーとセキュリティ → ファイルとフォルダ（またはフルディスクアクセス）で許可する。GUI も別のアプリとして許可を受ける。
 
 何度エクスポートしても、同じメッセージは会話・検索・件数に1回だけ出る。
 
 ### 設定を変えたとき
 
-- `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME`、`AI_CHAT_LOGS_CLAUDE_AI_DIR` は、次の取り込みから効く。登録しなおす必要は無い。
+- `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_INBOX` は、次の取り込みから効く。登録しなおす必要は無い。
 - `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
 ### コマンドをインストールするとき
@@ -53,7 +59,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 bin/install
 ```
 
-- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
+- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
 - リポジトリの場所を埋めこむ。`.env` は、埋めこんだリポジトリのものを読む。実行したディレクトリの `.env` は読まない。
 - pm2 の定期実行と GUI の取り込みは、これまでどおりリポジトリの `bin/sync` を使う。インストールしたコマンドには依存しない。
 
@@ -134,6 +140,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `AI_CHAT_LOGS_DB` | データベースのパス | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` |
 | `XDG_DATA_HOME` | データベースの既定の場所の基準 | `~/.local/share` |
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ | `~/.claude` |
+| `AI_CHAT_LOGS_CLAUDE_AI_INBOX` | claude.ai のエクスポートの受け取り用のディレクトリ | `~/Downloads` |
 | `AI_CHAT_LOGS_CLAUDE_AI_DIR` | claude.ai のエクスポートの保存用のディレクトリ | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai` |
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 * * * *` |
 | `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR` | デスクトップアプリのディレクトリ | `~/Library/Application Support/Claude` |

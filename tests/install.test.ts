@@ -1,11 +1,11 @@
 import { Database } from "bun:sqlite";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { accessSync, constants, rmSync } from "node:fs";
+import { accessSync, constants, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "chat-log-import", "claude-ai-export-convert", "ai-chat-logs-sync"];
+const NAMES = ["claude-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "ai-chat-logs-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>
@@ -69,6 +69,21 @@ describe("bin/install", () => {
     const result = run("ai-chat-logs-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
     expect(result.exitCode).toBe(0);
     expect(new Database(dbPath, { readonly: true }).query("SELECT count(*) c FROM records").get()).toEqual({ c: 1 });
+  });
+
+  test("ai-chat-logs-sync converts exports in the inbox (docs/adr/0010)", () => {
+    const home = tempDir();
+    const src = tempDir();
+    writeFile(
+      join(src, "conversations.json"),
+      JSON.stringify([{ uuid: "c1", name: "n", created_at: "2026-01-01T00:00:00Z", chat_messages: [{ uuid: "m1", sender: "human", text: "t" }] }]),
+    );
+    mkdirSync(join(home, "Downloads"));
+    expect(Bun.spawnSync(["zip", "-q", "-r", join(home, "Downloads/e.zip"), "."], { cwd: src }).exitCode).toBe(0);
+    const dbPath = join(home, "out.sqlite");
+    const result = run("ai-chat-logs-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
+    expect(result.exitCode).toBe(0);
+    expect(new Database(dbPath, { readonly: true }).query("SELECT count(*) c FROM session_summaries WHERE provider = 'claude-ai'").get()).toEqual({ c: 1 });
   });
 
   test("installs again over the existing files", () => {
