@@ -3,7 +3,7 @@ import { renderAdmin } from "./admin.ts";
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
 import { splitFences } from "./fences.ts";
-import { initialRange, nextRange, prevRange, type Range } from "./pages.ts";
+import { initialRange, newerRange, newestFirst, olderRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
 import { splitSnippet } from "./snippet.ts";
@@ -197,7 +197,8 @@ const messageNode = (message: api.Message): HTMLElement => {
   );
 };
 
-// docs/adr/0014: a session is loaded a page at a time as the view scrolls.
+// docs/adr/0014, docs/adr/0016: a session is loaded a page at a time as the view scrolls, newest first:
+// older messages are added below, newer ones above.
 const NEAR_EDGE_PX = 600;
 const conversation = {
   sessionId: null as string | null,
@@ -222,21 +223,23 @@ const loadRange = async (range: Range): Promise<api.MessagePage | null> => {
   return generation === conversation.generation ? page : null;
 };
 
+const nodes = (messages: readonly api.Message[]): Node[] => newestFirst(messages).map(messageNode);
+
 // While the loaded messages do not fill the view, no scroll happens; keep loading until they do.
 const fillView = (): void => {
-  if (view.scrollHeight - view.clientHeight < NEAR_EDGE_PX) void loadNext();
+  if (view.scrollHeight - view.clientHeight < NEAR_EDGE_PX) void loadOlder();
 };
 
-const loadNext = async (): Promise<void> => {
-  const next = conversation.range && nextRange(conversation.range, conversation.total);
+const loadOlder = async (): Promise<void> => {
+  const next = conversation.range && olderRange(conversation.range);
   if (!next || conversation.loadingDown) return;
   conversation.loadingDown = true;
   refreshStatus();
   try {
     const page = await loadRange(next);
     if (!page || !conversation.range) return;
-    messagesBox.append(...page.messages.map(messageNode));
-    conversation.range = { from: conversation.range.from, to: next.to };
+    messagesBox.append(...nodes(page.messages));
+    conversation.range = { from: next.from, to: conversation.range.to };
     conversation.total = page.total;
   } catch (e) {
     showError(e);
@@ -248,8 +251,8 @@ const loadNext = async (): Promise<void> => {
   fillView();
 };
 
-const loadPrevious = async (): Promise<void> => {
-  const prev = conversation.range && prevRange(conversation.range);
+const loadNewer = async (): Promise<void> => {
+  const prev = conversation.range && newerRange(conversation.range, conversation.total);
   if (!prev || conversation.loadingUp) return;
   conversation.loadingUp = true;
   refreshStatus();
@@ -258,9 +261,10 @@ const loadPrevious = async (): Promise<void> => {
     if (!page || !conversation.range) return;
     // Keep what the reader was looking at in place while the messages above grow.
     const before = view.scrollHeight;
-    messagesBox.prepend(...page.messages.map(messageNode));
+    messagesBox.prepend(...nodes(page.messages));
     view.scrollTop += view.scrollHeight - before;
-    conversation.range = { from: prev.from, to: conversation.range.to };
+    conversation.range = { from: conversation.range.from, to: prev.to };
+    conversation.total = page.total;
   } catch (e) {
     showError(e);
   } finally {
@@ -271,11 +275,17 @@ const loadPrevious = async (): Promise<void> => {
 
 view.addEventListener("scroll", () => {
   if (!conversation.sessionId || !conversation.range) return;
-  if (view.scrollTop + view.clientHeight >= view.scrollHeight - NEAR_EDGE_PX) void loadNext();
-  if (view.scrollTop <= NEAR_EDGE_PX) void loadPrevious();
+  if (view.scrollTop + view.clientHeight >= view.scrollHeight - NEAR_EDGE_PX) void loadOlder();
+  if (view.scrollTop <= NEAR_EDGE_PX) void loadNewer();
 });
 
-const openSession = async (sessionId: string, target: number | null, uuid: string | null): Promise<void> => {
+// `knownTotal` is the message count of the session list (docs/adr/0016); a search hit gives `target`.
+const openSession = async (
+  sessionId: string,
+  target: number | null,
+  uuid: string | null,
+  knownTotal: number | null,
+): Promise<void> => {
   state.selected = sessionId;
   conversation.generation += 1;
   conversation.sessionId = sessionId;
@@ -286,18 +296,22 @@ const openSession = async (sessionId: string, target: number | null, uuid: strin
   const generation = conversation.generation;
   clear(view, h("p", { class: "text-gray-500" }, ["読み込み中…"]));
   try {
-    // The first range does not depend on the total; the backend returns what exists in it.
-    const wanted = initialRange(target, Number.MAX_SAFE_INTEGER) as Range;
-    const page = await loadRange(wanted);
-    if (!page || generation !== conversation.generation) return;
-    const range = initialRange(target, page.total);
-    if (!range) {
+    // Around a hit the range does not depend on the total; the newest page uses the list's count,
+    // and the backend returns what exists in the range.
+    const first = initialRange(target, target === null ? (knownTotal ?? 0) : Number.MAX_SAFE_INTEGER);
+    const firstPage = first ? await loadRange(first) : null;
+    // The list's count may lag behind the database; then load the newest page again with the real total.
+    const stale = target === null && firstPage !== null && firstPage.total !== knownTotal;
+    const wanted = stale ? initialRange(null, (firstPage as api.MessagePage).total) : first;
+    const page = stale && wanted ? await loadRange(wanted) : firstPage;
+    if (generation !== conversation.generation) return;
+    if (!wanted || !page || page.total === 0) {
       clear(view, h("p", { class: "text-gray-500" }, ["メッセージがありません"]));
       return;
     }
-    conversation.range = { from: wanted.from, to: Math.min(range.to, wanted.to, page.total) };
+    conversation.range = { from: wanted.from, to: Math.min(wanted.to, page.total) };
     conversation.total = page.total;
-    clear(messagesBox, ...page.messages.map(messageNode));
+    clear(messagesBox, ...nodes(page.messages));
     clear(view, statusBox, messagesBox);
     refreshStatus();
     const found = uuid
@@ -324,7 +338,7 @@ const providerBadge = (provider: string): Node | null =>
   provider === "claude-code" ? null : h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
 
 const sessionItem = (s: api.SessionSummary): Node =>
-  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null, null) } }, [
+  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null, null, s.message_count) } }, [
     h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
     h("div", { class: "flex justify-between text-xs text-gray-500" }, [
       h("span", {}, [formatTime(s.last_at)]),
@@ -342,7 +356,7 @@ const snippetNode = (snippet: string): Node =>
 const hitItem = (hit: api.SearchHit): Node =>
   h(
     "li",
-    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.index, hit.uuid) } },
+    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.index, hit.uuid, null) } },
     [
       h("div", { class: "truncate text-xs font-medium" }, [providerBadge(hit.provider), hit.title ?? hit.session_id ?? ""]),
       h("div", { class: "text-xs text-gray-500" }, [`${hit.role ?? ""} ${formatTime(hit.timestamp)}`]),

@@ -202,7 +202,7 @@ pub fn get_messages(
     let to = from.saturating_add(limit).saturating_sub(1);
     let mut stmt = conn.prepare_cached(
         "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw
-         FROM (SELECT record_rowid, row_number() OVER (ORDER BY path, generation, line_no) AS idx
+         FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
                FROM session_messages WHERE session_id = ?1) x
          JOIN records r ON r.rowid = x.record_rowid
          WHERE x.idx BETWEEN ?2 AND ?3
@@ -228,26 +228,27 @@ pub fn get_messages(
 fn message_index(conn: &Connection, rowid: i64) -> Result<Option<usize>> {
     let at = conn
         .query_row(
-            "SELECT provider, session_id, path, generation, line_no FROM session_messages
-             WHERE record_rowid = ?1",
+            "SELECT provider, session_id, coalesce(timestamp, ''), path, generation, line_no
+             FROM session_messages WHERE record_rowid = ?1",
             params![rowid],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(3)?,
                     row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
         .optional()?;
     match at {
         None => Ok(None),
-        Some((provider, session, path, generation, line)) => Ok(Some(conn.query_row(
+        Some((provider, session, time, path, generation, line)) => Ok(Some(conn.query_row(
             "SELECT count(*) FROM session_messages
-             WHERE provider = ?1 AND session_id = ?2 AND (path, generation, line_no) <= (?3, ?4, ?5)",
-            params![provider, session, path, generation, line],
+             WHERE provider = ?1 AND session_id = ?2 AND (coalesce(timestamp, ''), path, generation, line_no) <= (?3, ?4, ?5, ?6)",
+            params![provider, session, time, path, generation, line],
             |row| row.get::<_, i64>(0),
         )? as usize)),
     }
@@ -592,17 +593,64 @@ mod tests {
     }
 
     #[test]
-    fn gets_session_messages_in_file_and_line_order() {
+    fn gets_session_messages_in_time_order() {
+        // docs/adr/0016: a2 (a subagent's record at 00:00:30) comes between u1 and a1.
         let conn = open_read_only(&sample()).unwrap();
         let messages = get_messages(&conn, "s1", 1, 1000)
             .map(|p| p.messages)
             .unwrap();
         let uuids: Vec<_> = messages.iter().map(|m| m.uuid.clone().unwrap()).collect();
-        assert_eq!(uuids, vec!["u1", "a1", "a2"]);
-        assert!(matches!(messages[1].blocks[0], Block::Thinking { .. }));
-        assert!(matches!(messages[1].blocks[2], Block::ToolUse { .. }));
-        assert!(messages[2].is_sidechain);
-        assert_eq!(messages[1].model.as_deref(), Some("m"));
+        assert_eq!(uuids, vec!["u1", "a2", "a1"]);
+        assert!(matches!(messages[2].blocks[0], Block::Thinking { .. }));
+        assert!(matches!(messages[2].blocks[2], Block::ToolUse { .. }));
+        assert!(messages[1].is_sidechain);
+        assert_eq!(messages[2].model.as_deref(), Some("m"));
+    }
+
+    #[test]
+    fn breaks_ties_of_time_by_path_and_line() {
+        let path = build(&[
+            line(
+                "/p/s9.jsonl",
+                "s9",
+                "m1",
+                "2026-01-01T00:00:00Z",
+                "user",
+                json!("a"),
+            ),
+            line(
+                "/p/s9.jsonl",
+                "s9",
+                "m2",
+                "2026-01-01T00:00:05Z",
+                "assistant",
+                json!([{"type": "text", "text": "b"}]),
+            ),
+            line(
+                "/p/s9/subagents/x.jsonl",
+                "s9",
+                "x1",
+                "2026-01-01T00:00:05Z",
+                "user",
+                json!("c"),
+            ),
+            line(
+                "/p/s9/subagents/x.jsonl",
+                "s9",
+                "x2",
+                "2026-01-01T00:00:02Z",
+                "assistant",
+                json!([{"type": "text", "text": "d"}]),
+            ),
+        ]);
+        let conn = open_read_only(&path).unwrap();
+        let uuids: Vec<_> = get_messages(&conn, "s9", 1, 10)
+            .unwrap()
+            .messages
+            .into_iter()
+            .map(|m| m.uuid.unwrap())
+            .collect();
+        assert_eq!(uuids, vec!["m1", "x2", "m2", "x1"]);
     }
 
     #[test]
@@ -938,7 +986,7 @@ mod tests {
             .iter()
             .map(|m| (m.index, m.uuid.clone().unwrap()))
             .collect();
-        assert_eq!(picked, vec![(2, "a1".to_string())]);
+        assert_eq!(picked, vec![(2, "a2".to_string())]);
         let rest = get_messages(&conn, "s1", 3, 10).unwrap();
         assert_eq!(
             rest.messages.iter().map(|m| m.index).collect::<Vec<_>>(),
@@ -978,7 +1026,7 @@ mod tests {
             numbered,
             vec![
                 ("u3".to_string(), Some(1)),
-                ("a1".to_string(), Some(2)),
+                ("a1".to_string(), Some(3)),
                 ("u1".to_string(), Some(1))
             ]
         );
