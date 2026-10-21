@@ -103,7 +103,7 @@ export const sessionMessages = (db: Database, sessionId: string, from: number, t
   db
     .query<{ idx: number; uuid: string | null; timestamp: string | null; raw: string }, [string, number, number]>(
       `SELECT x.idx, r.uuid, r.timestamp, r.raw
-       FROM (SELECT record_rowid, row_number() OVER (ORDER BY path, generation, line_no) AS idx
+       FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
              FROM session_messages WHERE session_id = ?) x
        JOIN records r ON r.rowid = x.record_rowid
        WHERE x.idx BETWEEN ? AND ? ORDER BY x.idx`,
@@ -146,17 +146,17 @@ const SNIPPET_CONTEXT = 32;
 // The number `show` gives to a record.
 const indexOf = (db: Database, rowid: number): number | null => {
   const at = db
-    .query<{ provider: string; session_id: string; path: string; generation: number; line_no: number }, [number]>(
-      "SELECT provider, session_id, path, generation, line_no FROM session_messages WHERE record_rowid = ?",
+    .query<{ provider: string; session_id: string; time: string; path: string; generation: number; line_no: number }, [number]>(
+      "SELECT provider, session_id, coalesce(timestamp, '') time, path, generation, line_no FROM session_messages WHERE record_rowid = ?",
     )
     .get(rowid);
   if (!at) return null;
   return (
     db
-      .query<{ n: number }, [string, string, string, number, number]>(
-        "SELECT count(*) n FROM session_messages WHERE provider = ? AND session_id = ? AND (path, generation, line_no) <= (?, ?, ?)",
+      .query<{ n: number }, [string, string, string, string, number, number]>(
+        "SELECT count(*) n FROM session_messages WHERE provider = ? AND session_id = ? AND (coalesce(timestamp, ''), path, generation, line_no) <= (?, ?, ?, ?)",
       )
-      .get(at.provider, at.session_id, at.path, at.generation, at.line_no)?.n ?? null
+      .get(at.provider, at.session_id, at.time, at.path, at.generation, at.line_no)?.n ?? null
   );
 };
 

@@ -34,6 +34,8 @@ const s1 = [
   rec(S1, "a2", "2026-10-01T00:03:00.000Z", "assistant", [{ type: "text", text: "了解しました" }], "/work/proj"),
 ];
 
+const SUB = "ssssssss-7777";
+
 // docs/adr/0013
 const T = "tttttttt-6666";
 const t = [
@@ -51,6 +53,9 @@ beforeAll(() => {
     ["p/s3.jsonl", jsonl(rec(S3, "o1", "2026-10-06T00:00:00.000Z", "user", "別のプロジェクトの全文検索", "/work/project-other"))],
     ["p/big.jsonl", jsonl(...Array.from({ length: 120 }, (_, i) => rec(BIG, `b${i}`, `2026-09-01T00:00:${String(i % 60).padStart(2, "0")}.000Z`, "user", "長".repeat(100_000), "/work/big")))],
     ["p/think.jsonl", jsonl(...t)],
+    // docs/adr/0016: a subagent's records interleave with the parent's in time
+    ["p/sub.jsonl", jsonl(rec(SUB, "p1", "2026-06-01T00:00:00.000Z", "user", "親の最初", "/work/sub"), rec(SUB, "p2", "2026-06-01T00:02:00.000Z", "assistant", [{ type: "text", text: "親の最後" }], "/work/sub"))],
+    ["p/sub/subagents/agent-1.jsonl", jsonl(rec(SUB, "q1", "2026-06-01T00:01:00.000Z", "assistant", [{ type: "text", text: "子の時系列の確認" }], "/work/sub"))],
     ["p/f1.jsonl", jsonl(rec("ffffffff-0001", "f1", "2026-08-01T00:00:00.000Z", "user", "一つ目", "/work/f"))],
     ["p/f2.jsonl", jsonl(rec("ffffffff-0002", "f2", "2026-08-02T00:00:00.000Z", "user", "二つ目", "/work/f"))],
   ].map(([rel, content]) => ({ kind: "claude-code/transcript", path: writeFile(join(dir, "src", rel as string), content as string) }));
@@ -301,6 +306,18 @@ describe("chat-log output corrections (docs/adr/0013)", () => {
   test("the help explains --cwd ., --around and the continuation lines", () => {
     const help = chatLog(["--help"]).out;
     ["--cwd .", "--limit 1", "（続き：#", "（前：#1〜#", "[thinking]", "⟪"].forEach((s) => expect(help).toContain(s));
+  });
+});
+
+describe("numbering in time order (docs/adr/0016)", () => {
+  test("show numbers a subagent's records between the parent's by time", () => {
+    const out = lines(chatLog(["show", SUB]).out).filter((l) => l.startsWith("## #"));
+    expect(out).toEqual([
+      "## #1 user 2026-06-01T00:00:00.000Z",
+      "## #2 assistant 2026-06-01T00:01:00.000Z",
+      "## #3 assistant 2026-06-01T00:02:00.000Z",
+    ]);
+    expect(lines(chatLog(["search", "子の時系列"]).out)[0]).toContain("ssssssss#2");
   });
 });
 
