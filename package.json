@@ -9,7 +9,8 @@
     "claude-log-sources": "src/cli/sources.ts",
     "chat-log-import": "src/cli/import.ts",
     "claude-ai-export-convert": "src/cli/claude-ai-export-convert.ts",
-    "claude-ai-export-scan": "src/cli/claude-ai-export-scan.ts"
+    "claude-ai-export-scan": "src/cli/claude-ai-export-scan.ts",
+    "chat-log": "src/cli/chat-log.ts"
   },
   "scripts": {
     "test": "bun test",

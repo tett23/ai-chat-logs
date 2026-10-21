@@ -181,11 +181,23 @@ ai-chat-logs の現行の仕様をまとめる。
 - 環境の検査は読むだけ。pm2 は `bun` の隣、`PATH`、`~/.bun/bin`、`~/.cache/.bun/bin` から探し、`bun` で `pm2 jlist` を実行して `ai-chat-logs-sync` の登録を調べる。launchd は `~/Library/LaunchAgents/pm2.*.plist` の有無を見る。
 - 取り込み：`/bin/sh <リポジトリ>/bin/sync`。claude.ai のエクスポート：ファイルを選ぶ画面（`tauri-plugin-dialog`）で zip を選び、`bun <リポジトリ>/src/cli/claude-ai-export-convert.ts <zip>` の後に取り込みを実行する。どちらも `PATH` の先頭に `bun` のディレクトリを足し、CLI が使う設定を環境変数で渡す。同時に1つだけ実行する。終わったら、終了コードと出力の最後の20行を出し、データベースを開きなおす。
 
+## AI 向けの CLI（chat-log）
+
+[ADR 0011](adr/0011-cli-for-ai-agents.md)、[ADR 0013](adr/0013-chat-log-output-corrections.md)
+
+- `chat-log <context | sessions | search | show>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が3より古ければ終了コード2。
+- 共通のオプション：`--provider`、`--cwd`（そのディレクトリか、その下。既定で絞るのは `context` だけ）、`--all`（`context`）、`--since`（ISO 8601 か `7d`・`12h`・`30m`）、`--limit`、`--offset`、`--max-chars`（0 で切らない）、`--json`（JSON Lines）。
+- `sessions`：`<最後の時刻>\t<提供元>\t<IDの先頭8文字>\t<メッセージ数>\t<タイトル>\t<cwd>`。新しい順。既定 50 件。
+- `search <語...>`：GUI と同じ検索の規則（3文字以上は FTS5、3文字未満は `LIKE`、写しは除く）。1件2行（`<時刻>\t<提供元>\t<ID>#<番号>\t<役割>\t<タイトル>`、`\t<抜粋>`）。一致は `⟪ ⟫` で囲み、重なる・隣りあう強調は1つにまとめる。思考にだけ一致したときは抜粋の先頭に `[thinking] `。`--json` の `matched_in`。既定 20 件。
+- `show <セッションID>`：先頭8文字以上で一意なら可。番号はセッションの中の通し番号（写しを除く）。本文はテキストだけ。思考は `--thinking`、ツールの全文は `--tools`（既定は1行・200文字）。テキストでないブロックは `[<種類>]`、200文字以上の base64 は `[base64 N 文字]`。表示するものが無いメッセージはテキストの出力で省く（番号は詰めない）。`--around N` は N を含む `--limit` 件（N の前に半分）、N のメッセージは思考も出す。続きは「（続き：#<次> から。--offset <数> で出す）」、`--around` で前があれば「（前：#1〜#<数> は --offset 0 で出す）」。既定 50 件、2000 文字。
+- `context`：既定で実行したディレクトリのセッション 5 件と、それぞれの最後のテキストのメッセージ 4 件（500 文字）。
+- 終了コード：0 成功（0件を含む）、1 セッションが無い・区別できない、2 使い方の誤り・データベースが無い・古い・設定の書式の誤り。
+
 ## インストール
 
 [ADR 0008](adr/0008-install-compiled-commands.md)
 
-- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
+- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
 - `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` を実行してから、`claude-log-sources` の出力を一度受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す。
 

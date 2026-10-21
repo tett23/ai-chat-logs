@@ -59,7 +59,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 bin/install
 ```
 
-- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
+- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
 - リポジトリの場所を埋めこむ。`.env` は、埋めこんだリポジトリのものを読む。実行したディレクトリの `.env` は読まない。
 - pm2 の定期実行と GUI の取り込みは、これまでどおりリポジトリの `bin/sync` を使う。インストールしたコマンドには依存しない。
 
@@ -171,6 +171,22 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 ```
 
 表とビューは [docs/specifications.md](docs/specifications.md) を参照。
+
+### AI に履歴を引かせる（chat-log）
+
+`chat-log` は、AI のエージェント（Claude Code など）が過去の経緯や決定を思い出して文脈を戻すための、読み取り専用の CLI（[ADR 0011](docs/adr/0011-cli-for-ai-agents.md)、[ADR 0013](docs/adr/0013-chat-log-output-corrections.md)）。使い方は `chat-log --help` に全部書いてあり、AI はヘルプだけで使える。
+
+```sh
+bun src/cli/chat-log.ts context                     # いまのプロジェクトの最近のセッションと最後のやりとり
+bun src/cli/chat-log.ts search 写し --cwd .          # 全文検索（結果に <セッションID>#<番号> が出る）
+bun src/cli/chat-log.ts show f0f40b1f --around 563 --limit 5   # その前後を読む
+```
+
+- `bin/install` で `~/.local/bin/chat-log` に入る。
+- 出力は短い決まった形のテキスト（`--json` で JSON Lines）。本文は既定で切りつめ、ツールの入出力は1行に要約し、思考は出さない（オプションで出せる）。
+- 抜粋の一致した部分は `⟪ ⟫` で囲む（本文の `**` は Markdown の太字）。
+- AI に使わせるときは、作業の指示や `CLAUDE.md` に「過去の経緯は `chat-log --help` を読んで `chat-log` で調べる」と書いておく。
+- 履歴には秘密の情報が含まれうる。AI に読ませた内容は、その AI の提供元に送られる。
 
 ### 閲覧・検索する（GUI）
 

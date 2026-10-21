@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "ai-chat-logs-sync"];
+const NAMES = ["claude-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>
@@ -18,8 +18,8 @@ beforeAll(() => {
   first = install();
 }, 120_000);
 
-const run = (name: string, env: Record<string, string | undefined>, cwd?: string) =>
-  Bun.spawnSync([join(prefix, name)], { env: isolatedEnv(env), cwd });
+const run = (name: string, env: Record<string, string | undefined>, cwd?: string, args: string[] = []) =>
+  Bun.spawnSync([join(prefix, name), ...args], { env: isolatedEnv(env), cwd });
 
 describe("bin/install", () => {
   test("installs the executables and the sync script and prints their paths", () => {
@@ -84,6 +84,16 @@ describe("bin/install", () => {
     const result = run("ai-chat-logs-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
     expect(result.exitCode).toBe(0);
     expect(new Database(dbPath, { readonly: true }).query("SELECT count(*) c FROM session_summaries WHERE provider = 'claude-ai'").get()).toEqual({ c: 1 });
+  });
+
+  test("the installed chat-log reads the database (docs/adr/0011)", () => {
+    const home = tempDir();
+    writeFile(join(home, ".claude/projects/p/s.jsonl"), jsonl({ type: "user", uuid: "u", sessionId: "abcdefgh-1", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "インストールの確認" } }));
+    const dbPath = join(home, "out.sqlite");
+    run("ai-chat-logs-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
+    const r = run("chat-log", { HOME: home, AI_CHAT_LOGS_DB: dbPath }, undefined, ["search", "インストール"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).toContain("abcdefgh#1");
   });
 
   test("installs again over the existing files", () => {
