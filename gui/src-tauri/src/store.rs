@@ -3,7 +3,7 @@
 use crate::blocks::{Block, to_blocks, truncate};
 use crate::query::{HIT_END, HIT_START, SearchPlan, make_snippet};
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OpenFlags, params, params_from_iter};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use std::path::Path;
 #[cfg(test)]
@@ -133,6 +133,8 @@ pub fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
 pub struct Message {
     /// records.rowid, for get_block
     pub rowid: i64,
+    /// The number of the message in its session, from 1, without copies (docs/adr/0014).
+    pub index: usize,
     pub uuid: Option<String>,
     pub timestamp: Option<String>,
     pub role: Option<String>,
@@ -145,12 +147,19 @@ fn content_blocks(value: &serde_json::Value) -> Vec<Block> {
     to_blocks(value.get("message").and_then(|m| m.get("content")))
 }
 
-fn to_message(rowid: i64, uuid: Option<String>, timestamp: Option<String>, raw: &str) -> Message {
+fn to_message(
+    rowid: i64,
+    index: usize,
+    uuid: Option<String>,
+    timestamp: Option<String>,
+    raw: &str,
+) -> Message {
     let value: serde_json::Value = serde_json::from_str(raw).unwrap_or_default();
     let message = value.get("message");
     let text = |v: Option<&serde_json::Value>| v.and_then(|v| v.as_str()).map(str::to_owned);
     Message {
         rowid,
+        index,
         uuid,
         timestamp,
         role: text(message.and_then(|m| m.get("role"))),
@@ -166,19 +175,82 @@ fn to_message(rowid: i64, uuid: Option<String>, timestamp: Option<String>, raw: 
     }
 }
 
-/// Messages of a session in file and line order, each copied record once (docs/adr/0005).
-pub fn get_session(conn: &Connection, session_id: &str) -> Result<Vec<Message>> {
+/// A page of the messages of a session and how many there are (docs/adr/0014).
+#[derive(Debug, PartialEq, Serialize)]
+pub struct MessagePage {
+    pub total: usize,
+    pub messages: Vec<Message>,
+}
+
+/// Messages numbered from 1 in file and line order, each copied record once (docs/adr/0005),
+/// whose numbers are in [from, from + limit).
+pub fn get_messages(
+    conn: &Connection,
+    session_id: &str,
+    from: usize,
+    limit: usize,
+) -> Result<MessagePage> {
+    // session_summaries.message_count counts the same rows (session_messages); counting them
+    // again scans the whole session.
+    let total = conn
+        .query_row(
+            "SELECT sum(message_count) FROM session_summaries WHERE session_id = ?1",
+            params![session_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )?
+        .unwrap_or(0) as usize;
+    let to = from.saturating_add(limit).saturating_sub(1);
     let mut stmt = conn.prepare_cached(
-        "SELECT m.record_rowid, r.uuid, r.timestamp, r.raw
-         FROM session_messages m JOIN records r ON r.rowid = m.record_rowid
-         WHERE m.session_id = ?1
-         ORDER BY m.path, m.generation, m.line_no",
+        "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw
+         FROM (SELECT record_rowid, row_number() OVER (ORDER BY path, generation, line_no) AS idx
+               FROM session_messages WHERE session_id = ?1) x
+         JOIN records r ON r.rowid = x.record_rowid
+         WHERE x.idx BETWEEN ?2 AND ?3
+         ORDER BY x.idx",
     )?;
-    let rows = stmt.query_map(params![session_id], |row| {
-        let raw: String = row.get(3)?;
-        Ok(to_message(row.get(0)?, row.get(1)?, row.get(2)?, &raw))
+    let rows = stmt.query_map(params![session_id, from as i64, to as i64], |row| {
+        let raw: String = row.get(4)?;
+        Ok(to_message(
+            row.get(0)?,
+            row.get::<_, i64>(1)? as usize,
+            row.get(2)?,
+            row.get(3)?,
+            &raw,
+        ))
     })?;
-    Ok(rows.collect::<rusqlite::Result<_>>()?)
+    Ok(MessagePage {
+        total,
+        messages: rows.collect::<rusqlite::Result<_>>()?,
+    })
+}
+
+/// The number get_messages gives to the record at `rowid`, if it is a message.
+fn message_index(conn: &Connection, rowid: i64) -> Result<Option<usize>> {
+    let at = conn
+        .query_row(
+            "SELECT provider, session_id, path, generation, line_no FROM session_messages
+             WHERE record_rowid = ?1",
+            params![rowid],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    match at {
+        None => Ok(None),
+        Some((provider, session, path, generation, line)) => Ok(Some(conn.query_row(
+            "SELECT count(*) FROM session_messages
+             WHERE provider = ?1 AND session_id = ?2 AND (path, generation, line_no) <= (?3, ?4, ?5)",
+            params![provider, session, path, generation, line],
+            |row| row.get::<_, i64>(0),
+        )? as usize)),
+    }
 }
 
 /// The whole block at `index` of the record at `rowid` (docs/adr/0005).
@@ -201,6 +273,8 @@ pub fn get_block(conn: &Connection, rowid: i64, index: usize) -> Result<Block> {
 pub struct SearchHit {
     pub provider: String,
     pub session_id: Option<String>,
+    /// The number of the message in its session (docs/adr/0014).
+    pub index: Option<usize>,
     pub uuid: Option<String>,
     pub timestamp: Option<String>,
     pub role: Option<String>,
@@ -246,7 +320,7 @@ fn search_sql(
         .collect::<Vec<_>>()
         .join(" AND ");
     let sql = format!(
-        "SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role', ss.title, {snippet}
+        "SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role', ss.title, {snippet}, r.rowid
          FROM record_texts
          JOIN records r ON r.rowid = record_texts.rowid
          JOIN sources s ON s.id = r.source_id
@@ -282,21 +356,31 @@ pub fn search(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values), |row| {
         let text: String = row.get(6)?;
-        Ok(SearchHit {
-            provider: row.get(0)?,
-            session_id: row.get(1)?,
-            uuid: row.get(2)?,
-            timestamp: row.get(3)?,
-            role: row.get(4)?,
-            title: row.get(5)?,
-            snippet: match plan.fts {
-                Some(_) => text,
-                None => make_snippet(&text, &plan.terms, SNIPPET_CONTEXT),
+        let rowid: i64 = row.get(7)?;
+        Ok((
+            rowid,
+            SearchHit {
+                provider: row.get(0)?,
+                session_id: row.get(1)?,
+                index: None,
+                uuid: row.get(2)?,
+                timestamp: row.get(3)?,
+                role: row.get(4)?,
+                title: row.get(5)?,
+                snippet: match plan.fts {
+                    Some(_) => text,
+                    None => make_snippet(&text, &plan.terms, SNIPPET_CONTEXT),
+                },
             },
-        })
+        ))
     })?;
+    let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let hits = found
+        .into_iter()
+        .map(|(rowid, hit)| message_index(conn, rowid).map(|index| SearchHit { index, ..hit }))
+        .collect::<Result<Vec<_>>>()?;
     Ok(SearchResult {
-        hits: rows.collect::<rusqlite::Result<_>>()?,
+        hits,
         slow: plan.is_slow(),
     })
 }
@@ -510,7 +594,9 @@ mod tests {
     #[test]
     fn gets_session_messages_in_file_and_line_order() {
         let conn = open_read_only(&sample()).unwrap();
-        let messages = get_session(&conn, "s1").unwrap();
+        let messages = get_messages(&conn, "s1", 1, 1000)
+            .map(|p| p.messages)
+            .unwrap();
         let uuids: Vec<_> = messages.iter().map(|m| m.uuid.clone().unwrap()).collect();
         assert_eq!(uuids, vec!["u1", "a1", "a2"]);
         assert!(matches!(messages[1].blocks[0], Block::Thinking { .. }));
@@ -681,7 +767,8 @@ mod tests {
     #[test]
     fn shows_a_copied_record_once() {
         let conn = open_read_only(&with_copy()).unwrap();
-        let uuids: Vec<_> = get_session(&conn, "s1")
+        let uuids: Vec<_> = get_messages(&conn, "s1", 1, 1000)
+            .map(|p| p.messages)
             .unwrap()
             .into_iter()
             .map(|m| m.uuid.unwrap())
@@ -713,7 +800,10 @@ mod tests {
             json!([{"type": "text", "text": "短い"}, {"type": "tool_result", "content": long}]),
         )]);
         let conn = open_read_only(&path).unwrap();
-        let message = get_session(&conn, "s1").unwrap().remove(0);
+        let message = get_messages(&conn, "s1", 1, 1000)
+            .map(|p| p.messages)
+            .unwrap()
+            .remove(0);
         assert_eq!(
             message.blocks[0],
             Block::Text {
@@ -824,7 +914,9 @@ mod tests {
     #[test]
     fn reads_claude_ai_conversations() {
         let conn = open_read_only(&with_providers()).unwrap();
-        let messages = get_session(&conn, "c1").unwrap();
+        let messages = get_messages(&conn, "c1", 1, 1000)
+            .map(|p| p.messages)
+            .unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].role.as_deref(), Some("user"));
         assert_eq!(
@@ -833,6 +925,69 @@ mod tests {
                 text: "claude.ai の全文検索".into()
             }]
         );
+    }
+
+    // docs/adr/0014
+    #[test]
+    fn pages_messages_with_numbers_and_the_total() {
+        let conn = open_read_only(&sample()).unwrap();
+        let page = get_messages(&conn, "s1", 2, 1).unwrap();
+        assert_eq!(page.total, 3);
+        let picked: Vec<_> = page
+            .messages
+            .iter()
+            .map(|m| (m.index, m.uuid.clone().unwrap()))
+            .collect();
+        assert_eq!(picked, vec![(2, "a1".to_string())]);
+        let rest = get_messages(&conn, "s1", 3, 10).unwrap();
+        assert_eq!(
+            rest.messages.iter().map(|m| m.index).collect::<Vec<_>>(),
+            vec![3]
+        );
+        let beyond = get_messages(&conn, "s1", 5, 10).unwrap();
+        assert_eq!((beyond.total, beyond.messages.len()), (3, 0));
+    }
+
+    #[test]
+    fn copies_do_not_take_numbers() {
+        let conn = open_read_only(&with_copy()).unwrap();
+        let page = get_messages(&conn, "s1", 1, 100).unwrap();
+        assert_eq!(page.total, 3);
+        let numbered: Vec<_> = page
+            .messages
+            .iter()
+            .map(|m| (m.index, m.uuid.clone().unwrap()))
+            .collect();
+        assert_eq!(
+            numbered,
+            vec![(1, "u1".into()), (2, "a1".into()), (3, "u9".into())]
+        );
+    }
+
+    #[test]
+    fn search_hits_carry_the_message_number() {
+        let conn = open_read_only(&sample()).unwrap();
+        let hits = search(&conn, &plan_search("検索"), None, None, 0, 10)
+            .unwrap()
+            .hits;
+        let numbered: Vec<_> = hits
+            .iter()
+            .map(|h| (h.uuid.clone().unwrap(), h.index))
+            .collect();
+        assert_eq!(
+            numbered,
+            vec![
+                ("u3".to_string(), Some(1)),
+                ("a1".to_string(), Some(2)),
+                ("u1".to_string(), Some(1))
+            ]
+        );
+        let copy = open_read_only(&with_copy()).unwrap();
+        let hit = search(&copy, &plan_search("原本"), None, None, 0, 10)
+            .unwrap()
+            .hits
+            .remove(0);
+        assert_eq!(hit.index, Some(1));
     }
 
     #[test]
