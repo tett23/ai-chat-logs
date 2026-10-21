@@ -45,5 +45,5 @@ v0.8.1 までは ADR の参照のリンクの付与だけを許可していた�
 
 ## 参考文献
 
-- tett23/adr-guard ADR 0015「`--allow-links` で、ADRの参照以外のリンクを付ける・外す・リンク先を変える変更も許可する」：https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md
+- [tett23/adr-guard ADR 0015「`--allow-links` で、ADRの参照以外のリンクを付ける・外す・リンク先を変える変更も許可する」](https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md)：https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md
 - adr-guard v0.8.2 のリリース：https://github.com/tett23/adr-guard/releases/tag/v0.8.2

@@ -36,6 +36,7 @@ build claude-log-sources src/cli/sources.ts
 build chat-log-import src/cli/import.ts
 build claude-ai-export-convert src/cli/claude-ai-export-convert.ts
 build claude-ai-export-scan src/cli/claude-ai-export-scan.ts
+build chat-log src/cli/chat-log.ts
 
 tmp="$prefix/.ai-chat-logs-sync.tmp.$$"
 cp "$root/bin/ai-chat-logs-sync" "$tmp"
