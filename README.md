@@ -195,7 +195,7 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 
 ## 開発
 
-クローン後、gitのhookを有効化する。コミット済みのADRの変更は [adr-guard](https://github.com/tett23/adr-guard) で拒否する。ただし、ステータスの行とリンクだけの変更は許可する（[ADR 0009](docs/adr/0009-update-adr-guard-to-v0-8-2.md)）。
+クローン後、gitのhookを有効化する。コミット済みのADRの変更は [adr-guard](https://github.com/tett23/adr-guard) で拒否する。ただし、ステータスの行とリンクだけの変更は許可する（[ADR 0009](docs/adr/0009-update-adr-guard-to-v0-8-2.md)、[ADR 0012](docs/adr/0012-update-adr-guard-to-v0-8-3.md)）。
 
 ```sh
 git config core.hooksPath .githooks
