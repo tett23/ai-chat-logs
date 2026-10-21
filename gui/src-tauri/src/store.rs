@@ -3,8 +3,9 @@
 use crate::blocks::{Block, to_blocks, truncate};
 use crate::query::{HIT_END, HIT_START, SearchPlan, make_snippet};
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
+use rusqlite::{Connection, OpenFlags, params, params_from_iter};
 use serde::Serialize;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -224,34 +225,41 @@ pub fn get_messages(
     })
 }
 
-/// The number get_messages gives to the record at `rowid`, if it is a message.
-fn message_index(conn: &Connection, rowid: i64) -> Result<Option<usize>> {
-    let at = conn
-        .query_row(
-            "SELECT provider, session_id, coalesce(timestamp, ''), path, generation, line_no
-             FROM session_messages WHERE record_rowid = ?1",
-            params![rowid],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, i64>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
+/// The numbers get_messages gives to the hits' records, one query per session
+/// (docs/adr/0017). A record that is not a message (a copy) has no number.
+fn message_indexes(conn: &Connection, hits: &[(i64, SearchHit)]) -> Result<HashMap<i64, usize>> {
+    let sessions = hits
+        .iter()
+        .filter_map(|(rowid, hit)| {
+            hit.session_id
+                .as_ref()
+                .map(|session| ((hit.provider.clone(), session.clone()), *rowid))
+        })
+        .fold(
+            BTreeMap::<(String, String), Vec<i64>>::new(),
+            |mut acc, (key, rowid)| {
+                acc.entry(key).or_default().push(rowid);
+                acc
             },
-        )
-        .optional()?;
-    match at {
-        None => Ok(None),
-        Some((provider, session, time, path, generation, line)) => Ok(Some(conn.query_row(
-            "SELECT count(*) FROM session_messages
-             WHERE provider = ?1 AND session_id = ?2 AND (coalesce(timestamp, ''), path, generation, line_no) <= (?3, ?4, ?5, ?6)",
-            params![provider, session, time, path, generation, line],
-            |row| row.get::<_, i64>(0),
-        )? as usize)),
-    }
+        );
+    let mut stmt = conn.prepare_cached(
+        "SELECT record_rowid, n FROM (
+           SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS n
+           FROM session_messages WHERE provider = ?1 AND session_id = ?2)
+         WHERE record_rowid IN (SELECT value FROM json_each(?3))",
+    )?;
+    sessions
+        .iter()
+        .map(|((provider, session), rowids)| {
+            let ids = serde_json::to_string(rowids).unwrap_or_default();
+            stmt.query_map(params![provider, session, ids], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? as usize))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map(|found| found.into_iter().flatten().collect())
+        .map_err(Into::into)
 }
 
 /// The whole block at `index` of the record at `rowid` (docs/adr/0005).
@@ -376,10 +384,14 @@ pub fn search(
         ))
     })?;
     let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let indexes = message_indexes(conn, &found)?;
     let hits = found
         .into_iter()
-        .map(|(rowid, hit)| message_index(conn, rowid).map(|index| SearchHit { index, ..hit }))
-        .collect::<Result<Vec<_>>>()?;
+        .map(|(rowid, hit)| SearchHit {
+            index: indexes.get(&rowid).copied(),
+            ..hit
+        })
+        .collect();
     Ok(SearchResult {
         hits,
         slow: plan.is_slow(),
@@ -405,10 +417,11 @@ mod tests {
     use crate::query::plan_search;
     use serde_json::json;
 
-    const SCHEMA: [&str; 3] = [
+    const SCHEMA: [&str; 4] = [
         include_str!("../../../schema/0001-initial.sql"),
         include_str!("../../../schema/0002-search-and-summaries.sql"),
         include_str!("../../../schema/0003-other-providers.sql"),
+        include_str!("../../../schema/0004-session-message-indexes.sql"),
     ];
 
     struct Line {
@@ -449,7 +462,7 @@ mod tests {
         SCHEMA
             .iter()
             .for_each(|sql| conn.execute_batch(sql).unwrap());
-        conn.execute_batch("PRAGMA user_version = 3").unwrap();
+        conn.execute_batch("PRAGMA user_version = 4").unwrap();
         lines.iter().enumerate().for_each(|(i, l)| {
             conn.execute(
                 "INSERT OR IGNORE INTO sources (kind, path, first_seen_at, last_seen_at)
@@ -1036,6 +1049,98 @@ mod tests {
             .hits
             .remove(0);
         assert_eq!(hit.index, Some(1));
+    }
+
+    // docs/adr/0017: hits of one session are numbered together, as get_messages numbers them.
+    #[test]
+    fn search_hit_numbers_match_get_messages() {
+        let path = build(&[
+            line(
+                "/p/s1.jsonl",
+                "s1",
+                "u1",
+                "2026-01-01T00:00:00Z",
+                "user",
+                json!("番号の確認 一"),
+            ),
+            line(
+                "/q/fork.jsonl",
+                "s1",
+                "u1",
+                "2026-01-01T00:00:00Z",
+                "user",
+                json!("番号の確認 一"),
+            ),
+            line(
+                "/p/s1/subagents/agent-1.jsonl",
+                "s1",
+                "x1",
+                "2026-01-01T00:00:30Z",
+                "assistant",
+                json!([{"type": "text", "text": "番号の確認 子"}]),
+            ),
+            line(
+                "/p/s1.jsonl",
+                "s1",
+                "a1",
+                "2026-01-01T00:01:00Z",
+                "assistant",
+                json!([{"type": "text", "text": "番号の確認 二"}]),
+            ),
+            line(
+                "/p/s2.jsonl",
+                "s2",
+                "v1",
+                "2026-01-02T00:00:00Z",
+                "user",
+                json!("前置き"),
+            ),
+            line(
+                "/p/s2.jsonl",
+                "s2",
+                "v2",
+                "2026-01-02T00:01:00Z",
+                "user",
+                json!("番号の確認 別"),
+            ),
+        ]);
+        let conn = open_read_only(&path).unwrap();
+        let hits = search(&conn, &plan_search("番号の確認"), None, None, 0, 10)
+            .unwrap()
+            .hits;
+        let numbers = |session: &str| -> Vec<(String, usize)> {
+            get_messages(&conn, session, 1, 100)
+                .unwrap()
+                .messages
+                .into_iter()
+                .map(|m| (m.uuid.unwrap(), m.index))
+                .collect()
+        };
+        let expected: Vec<_> = hits
+            .iter()
+            .map(|h| {
+                let uuid = h.uuid.clone().unwrap();
+                let index = numbers(h.session_id.as_deref().unwrap())
+                    .into_iter()
+                    .find(|(u, _)| *u == uuid)
+                    .map(|(_, i)| i);
+                (uuid, index)
+            })
+            .collect();
+        let found: Vec<_> = hits
+            .iter()
+            .map(|h| (h.uuid.clone().unwrap(), h.index))
+            .collect();
+        assert_eq!(found, expected);
+        assert_eq!(
+            found,
+            vec![
+                ("v2".to_string(), Some(2)),
+                ("a1".to_string(), Some(3)),
+                ("x1".to_string(), Some(2)),
+                ("u1".to_string(), Some(1)),
+            ]
+        );
     }
 
     #[test]

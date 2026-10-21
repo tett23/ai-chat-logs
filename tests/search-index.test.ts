@@ -4,6 +4,7 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
 import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
+import otherProviders from "../schema/0003-other-providers.sql" with { type: "text" };
 import { openDatabase } from "../src/db.ts";
 import { importSources, type SourceEntry } from "../src/import.ts";
 import { jsonl, tempDir, writeFile } from "./helpers.ts";
@@ -239,3 +240,59 @@ describe("migration", () => {
   });
 });
 
+
+// docs/adr/0017
+describe("indexes for numbering session messages", () => {
+  const indexes = (db: Database) =>
+    db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'records' AND sql IS NOT NULL ORDER BY name").all().map((r) => r.name);
+
+  test("migrating from version 3 adds the covering indexes and drops records_uuid", () => {
+    const dir = tempDir();
+    const dbPath = join(dir, "v3.sqlite");
+    const old = new Database(dbPath);
+    old.run(initial);
+    old.run(searchAndSummaries);
+    old.run(otherProviders);
+    old.run("PRAGMA user_version = 3");
+    old.close();
+    const db = openDatabase(dbPath);
+    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(4);
+    expect(indexes(db)).toEqual(["records_session", "records_session_order", "records_uuid_session"]);
+  });
+
+  test("session_messages drops the same copies as copied_records", () => {
+    const { dir, db } = setup();
+    const u = user("s", "原本");
+    const a = assistant("s", [{ type: "text", text: "答え" }]);
+    const noUuid = { ...user("s", "uuid の無い本文"), uuid: undefined };
+    const original = writeFile(join(dir, "a/s.jsonl"), jsonl(u, a, noUuid, noUuid));
+    const copy = writeFile(join(dir, "b/fork.jsonl"), jsonl(u, a, assistant("s", [{ type: "text", text: "写しにだけある" }])));
+    const other = writeFile(join(dir, "c/t.jsonl"), jsonl({ ...u, sessionId: "t" }));
+    importSources(db, [transcript(original), transcript(copy), transcript(other)], {});
+    const rows = (sql: string) => db.query<{ record_rowid: number }, []>(sql).all().map((r) => r.record_rowid);
+    const viaView = rows("SELECT record_rowid FROM session_messages ORDER BY record_rowid");
+    const viaCopies = rows(
+      `SELECT r.rowid record_rowid FROM records r JOIN sources s ON s.id = r.source_id
+       WHERE s.kind = 'claude-code/transcript' AND r.type IN ('user', 'assistant') AND r.session_id IS NOT NULL
+         AND NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid)
+       ORDER BY r.rowid`,
+    );
+    expect(viaView).toEqual(viaCopies);
+    expect(viaView.length).toBe(6);
+  });
+
+  test("numbering a session reads only the indexes of records", () => {
+    const { db } = setup();
+    const plan = db
+      .query<{ detail: string }, []>(
+        `EXPLAIN QUERY PLAN SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no)
+         FROM session_messages WHERE provider = 'claude-code' AND session_id = 's'`,
+      )
+      .all()
+      .map((r) => r.detail);
+    expect(plan.filter((d) => /\b(SCAN|SEARCH) r2? /.test(d))).toEqual([
+      expect.stringContaining("COVERING INDEX records_session_order"),
+      expect.stringContaining("COVERING INDEX records_uuid_session"),
+    ]);
+  });
+});

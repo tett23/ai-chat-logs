@@ -319,5 +319,10 @@ describe("numbering in time order (docs/adr/0016)", () => {
     ]);
     expect(lines(chatLog(["search", "子の時系列"]).out)[0]).toContain("ssssssss#2");
   });
+
+  test("numbers several hits of one session together (docs/adr/0017)", () => {
+    const heads = lines(chatLog(["search", "親の", "--cwd", "/work/sub"]).out).filter((l) => !l.startsWith("\t"));
+    expect(heads.map((l) => l.split("\t")[2])).toEqual(["ssssssss#3", "ssssssss#1"]);
+  });
 });
 
