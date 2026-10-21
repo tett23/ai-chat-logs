@@ -3,6 +3,7 @@ import { renderAdmin } from "./admin.ts";
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
 import { splitFences } from "./fences.ts";
+import { initialRange, nextRange, prevRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
 import { splitSnippet } from "./snippet.ts";
@@ -188,27 +189,131 @@ const messageNode = (message: api.Message): HTMLElement => {
   const content = message.is_sidechain ? [folded("サブエージェント", () => [header, ...body()])] : [header, ...body()];
   return h(
     "article",
-    { class: `mb-3 rounded p-2 ${isUser ? "bg-blue-50" : ""}`, attrs: message.uuid ? { "data-uuid": message.uuid } : {} },
+    {
+      class: `mb-3 rounded p-2 ${isUser ? "bg-blue-50" : ""}`,
+      attrs: { "data-index": String(message.index), ...(message.uuid ? { "data-uuid": message.uuid } : {}) },
+    },
     content,
   );
 };
 
-const openSession = async (sessionId: string, uuid: string | null): Promise<void> => {
+// docs/adr/0014: a session is loaded a page at a time as the view scrolls.
+const NEAR_EDGE_PX = 600;
+const conversation = {
+  sessionId: null as string | null,
+  generation: 0, // bumps when another session is opened, so stale pages are dropped
+  range: null as Range | null,
+  total: 0,
+  loadingUp: false,
+  loadingDown: false,
+};
+const pageStatus = (): HTMLElement =>
+  h("p", { class: "py-1 text-xs text-gray-400" }, [
+    conversation.range ? `${conversation.range.from}〜${conversation.range.to} / ${conversation.total}` : "",
+    conversation.loadingUp || conversation.loadingDown ? "（読み込み中…）" : "",
+  ]);
+const messagesBox = h("div");
+const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90" });
+const refreshStatus = (): void => clear(statusBox, pageStatus());
+
+const loadRange = async (range: Range): Promise<api.MessagePage | null> => {
+  const generation = conversation.generation;
+  const page = await api.getMessages(conversation.sessionId as string, range.from, range.to - range.from + 1);
+  return generation === conversation.generation ? page : null;
+};
+
+// While the loaded messages do not fill the view, no scroll happens; keep loading until they do.
+const fillView = (): void => {
+  if (view.scrollHeight - view.clientHeight < NEAR_EDGE_PX) void loadNext();
+};
+
+const loadNext = async (): Promise<void> => {
+  const next = conversation.range && nextRange(conversation.range, conversation.total);
+  if (!next || conversation.loadingDown) return;
+  conversation.loadingDown = true;
+  refreshStatus();
+  try {
+    const page = await loadRange(next);
+    if (!page || !conversation.range) return;
+    messagesBox.append(...page.messages.map(messageNode));
+    conversation.range = { from: conversation.range.from, to: next.to };
+    conversation.total = page.total;
+  } catch (e) {
+    showError(e);
+    return;
+  } finally {
+    conversation.loadingDown = false;
+    refreshStatus();
+  }
+  fillView();
+};
+
+const loadPrevious = async (): Promise<void> => {
+  const prev = conversation.range && prevRange(conversation.range);
+  if (!prev || conversation.loadingUp) return;
+  conversation.loadingUp = true;
+  refreshStatus();
+  try {
+    const page = await loadRange(prev);
+    if (!page || !conversation.range) return;
+    // Keep what the reader was looking at in place while the messages above grow.
+    const before = view.scrollHeight;
+    messagesBox.prepend(...page.messages.map(messageNode));
+    view.scrollTop += view.scrollHeight - before;
+    conversation.range = { from: prev.from, to: conversation.range.to };
+  } catch (e) {
+    showError(e);
+  } finally {
+    conversation.loadingUp = false;
+    refreshStatus();
+  }
+};
+
+view.addEventListener("scroll", () => {
+  if (!conversation.sessionId || !conversation.range) return;
+  if (view.scrollTop + view.clientHeight >= view.scrollHeight - NEAR_EDGE_PX) void loadNext();
+  if (view.scrollTop <= NEAR_EDGE_PX) void loadPrevious();
+});
+
+const openSession = async (sessionId: string, target: number | null, uuid: string | null): Promise<void> => {
   state.selected = sessionId;
+  conversation.generation += 1;
+  conversation.sessionId = sessionId;
+  conversation.range = null;
+  conversation.total = 0;
+  conversation.loadingUp = false;
+  conversation.loadingDown = false;
+  const generation = conversation.generation;
   clear(view, h("p", { class: "text-gray-500" }, ["読み込み中…"]));
   try {
-    const messages = await api.getSession(sessionId);
-    if (state.selected !== sessionId) return;
-    clear(view, ...messages.map(messageNode));
-    const target = uuid ? view.querySelector<HTMLElement>(`[data-uuid="${CSS.escape(uuid)}"]`) : null;
-    if (target) {
-      const sidechain = target.querySelector("details");
-      if (sidechain && target.firstElementChild === sidechain) sidechain.open = true;
-      target.classList.add("ring-2", "ring-amber-400");
-      target.scrollIntoView({ block: "center" });
+    // The first range does not depend on the total; the backend returns what exists in it.
+    const wanted = initialRange(target, Number.MAX_SAFE_INTEGER) as Range;
+    const page = await loadRange(wanted);
+    if (!page || generation !== conversation.generation) return;
+    const range = initialRange(target, page.total);
+    if (!range) {
+      clear(view, h("p", { class: "text-gray-500" }, ["メッセージがありません"]));
+      return;
+    }
+    conversation.range = { from: wanted.from, to: Math.min(range.to, wanted.to, page.total) };
+    conversation.total = page.total;
+    clear(messagesBox, ...page.messages.map(messageNode));
+    clear(view, statusBox, messagesBox);
+    refreshStatus();
+    const found = uuid
+      ? view.querySelector<HTMLElement>(`[data-uuid="${CSS.escape(uuid)}"]`)
+      : target !== null
+        ? view.querySelector<HTMLElement>(`[data-index="${target}"]`)
+        : null;
+    if (found) {
+      const sidechain = found.querySelector("details");
+      if (sidechain && found.firstElementChild === sidechain) sidechain.open = true;
+      found.classList.add("ring-2", "ring-amber-400");
+      found.scrollIntoView({ block: "center" });
     } else {
       view.scrollTop = 0;
     }
+    fillView();
   } catch (e) {
     showError(e);
   }
@@ -219,7 +324,7 @@ const providerBadge = (provider: string): Node | null =>
   provider === "claude-code" ? null : h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
 
 const sessionItem = (s: api.SessionSummary): Node =>
-  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null) } }, [
+  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null, null) } }, [
     h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
     h("div", { class: "flex justify-between text-xs text-gray-500" }, [
       h("span", {}, [formatTime(s.last_at)]),
@@ -237,7 +342,7 @@ const snippetNode = (snippet: string): Node =>
 const hitItem = (hit: api.SearchHit): Node =>
   h(
     "li",
-    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.uuid) } },
+    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.index, hit.uuid) } },
     [
       h("div", { class: "truncate text-xs font-medium" }, [providerBadge(hit.provider), hit.title ?? hit.session_id ?? ""]),
       h("div", { class: "text-xs text-gray-500" }, [`${hit.role ?? ""} ${formatTime(hit.timestamp)}`]),

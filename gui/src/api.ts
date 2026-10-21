@@ -32,6 +32,7 @@ export type Block =
 
 export type Message = {
   rowid: number;
+  index: number;
   uuid: string | null;
   timestamp: string | null;
   role: string | null;
@@ -43,6 +44,7 @@ export type Message = {
 export type SearchHit = {
   provider: string;
   session_id: string | null;
+  index: number | null;
   uuid: string | null;
   timestamp: string | null;
   role: string | null;
@@ -56,7 +58,10 @@ export const status = () => invoke<Status>("status");
 export const listProjects = () => invoke<Project[]>("list_projects");
 export const listSessions = (filter: Filter | null, offset: number, limit: number) =>
   invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });
-export const getSession = (sessionId: string) => invoke<Message[]>("get_session", { sessionId });
+// docs/adr/0014
+export type MessagePage = { total: number; messages: Message[] };
+export const getMessages = (sessionId: string, from: number, limit: number) =>
+  invoke<MessagePage>("get_messages", { sessionId, from, limit });
 export const getBlock = (rowid: number, index: number) => invoke<Block>("get_block", { rowid, index });
 export const search = (query: string, filter: Filter | null, offset: number, limit: number) =>
   invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });

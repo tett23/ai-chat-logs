@@ -16,7 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use store::{Message, Project, SearchResult, SessionSummary, StoreError};
+use store::{Project, SearchResult, SessionSummary, StoreError};
 
 /// The repository this app was built from: the default of AI_CHAT_LOGS_REPO.
 const REPO_AT_BUILD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -194,11 +194,13 @@ fn list_projects(state: tauri::State<'_, AppState>) -> CommandResult<Vec<Project
 }
 
 #[tauri::command(async)]
-fn get_session(
+fn get_messages(
     state: tauri::State<'_, AppState>,
     session_id: String,
-) -> CommandResult<Vec<Message>> {
-    with_db(&state, |c| store::get_session(c, &session_id))
+    from: usize,
+    limit: usize,
+) -> CommandResult<store::MessagePage> {
+    with_db(&state, |c| store::get_messages(c, &session_id, from, limit))
 }
 
 #[tauri::command(async)]
@@ -509,7 +511,7 @@ fn main() {
             status,
             list_sessions,
             list_projects,
-            get_session,
+            get_messages,
             get_block,
             search,
             get_settings,
