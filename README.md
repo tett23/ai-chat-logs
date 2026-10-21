@@ -205,6 +205,17 @@ git config core.hooksPath .githooks
 
 設計判断は `docs/adr/` にADRとして記録する。仕様は [docs/specifications.md](docs/specifications.md) を参照。
 
+ADR のステータスは次のように移る（[ADR 0015](docs/adr/0015-distinguish-accepted-and-unimplemented-adrs.md)）。
+
+| 値 | 意味 |
+|---|---|
+| `提案` | レビュー待ち。コミットしない |
+| `採択（未実装）` | 採択した。実装はまだ main に入っていない。`adr-guard unimplemented` で一覧できる |
+| `採択` | 実装が main に入った（実装の要らない ADR は採択した時点で `採択`） |
+| `採択→<変わった部分>は ADR NNNN` | 一部が後の ADR で変わった |
+
+- 採択した ADR は `採択（未実装）` でコミットし、実装の PR でステータスを `採択` にする。実装を複数の PR に分けるときは、最後の PR で変える。
+
 ## License
 
 [MIT](LICENSE)
