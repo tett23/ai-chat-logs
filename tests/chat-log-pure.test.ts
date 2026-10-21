@@ -1,25 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { renderBlock, replaceBase64, toBlocks, truncate } from "../src/chat-log/blocks.ts";
-import { highlight, makeSnippet, planSearch } from "../src/chat-log/search.ts";
-import { matchSession, parseSince } from "../src/chat-log/values.ts";
+import { makeSnippet, planSearch } from "../src/chat-log/search.ts";
+import { matchSession, parseTime } from "../src/chat-log/values.ts";
 
 // docs/adr/0011
-describe("parseSince", () => {
+describe("parseTime", () => {
   const now = Date.parse("2026-10-17T12:00:00.000Z");
 
   test("relative durations", () => {
-    expect(parseSince("7d", now)).toBe("2026-10-10T12:00:00.000Z");
-    expect(parseSince("12h", now)).toBe("2026-10-17T00:00:00.000Z");
-    expect(parseSince("30m", now)).toBe("2026-10-17T11:30:00.000Z");
+    expect(parseTime("7d", now)).toBe("2026-10-10T12:00:00.000Z");
+    expect(parseTime("12h", now)).toBe("2026-10-17T00:00:00.000Z");
+    expect(parseTime("30m", now)).toBe("2026-10-17T11:30:00.000Z");
   });
 
   test("ISO 8601 dates and times", () => {
-    expect(parseSince("2026-10-01", now)).toBe("2026-10-01T00:00:00.000Z");
-    expect(parseSince("2026-10-01T12:00:00+09:00", now)).toBe("2026-10-01T03:00:00.000Z");
+    expect(parseTime("2026-10-01", now)).toBe("2026-10-01T00:00:00.000Z");
+    expect(parseTime("2026-10-01T12:00:00+09:00", now)).toBe("2026-10-01T03:00:00.000Z");
   });
 
   test.each(["", "7", "7w", "yesterday", "2026-13-40"])("rejects %p", (input) => {
-    expect(() => parseSince(input, now)).toThrow();
+    expect(() => parseTime(input, now)).toThrow();
   });
 });
 
@@ -43,19 +43,29 @@ describe("planSearch", () => {
 });
 
 describe("snippets", () => {
-  // docs/adr/0013: ⟪⟫ instead of **, which 14% of the texts contain as Markdown bold.
-  test("highlight replaces the private-use delimiters with ⟪⟫", () => {
-    expect(highlight("前検索語後")).toBe("前⟪検索語⟫後");
-  });
-
-  test("highlight merges nested and adjacent hits", () => {
-    expect(highlight("語")).toBe("⟪語⟫");
-    expect(highlight("実行です")).toBe("⟪実行⟫です");
-  });
-
   test("makeSnippet cuts around the first occurrence", () => {
     expect(makeSnippet("0123456789検索ABCDEFGHIJ", ["検索"], 3)).toBe("…789⟪検索⟫ABC…");
     expect(makeSnippet("Xy xy", ["xY"], 10)).toBe("⟪Xy⟫ ⟪xy⟫");
+  });
+
+  // docs/adr/0018: a window per term, so that every term of an AND search shows.
+  test("makeSnippet cuts a window around each term, joined with …", () => {
+    expect(makeSnippet(`alpha${"x".repeat(100)}beta`, ["alpha", "beta"], 3)).toBe("⟪alpha⟫xxx…xxx⟪beta⟫");
+    expect(makeSnippet(`前${"x".repeat(100)}梨${"y".repeat(100)}柿${"z".repeat(10)}`, ["柿", "梨"], 2)).toBe("…xx⟪梨⟫yy…yy⟪柿⟫zz…");
+  });
+
+  test("makeSnippet merges close windows", () => {
+    expect(makeSnippet("0123alpha45beta6789", ["alpha", "beta"], 2)).toBe("…23⟪alpha⟫45⟪beta⟫67…");
+  });
+
+  test("makeSnippet marks every occurrence in the windows and does not cut a term", () => {
+    expect(makeSnippet("Alpha alpha", ["alpha"], 10)).toBe("⟪Alpha⟫ ⟪alpha⟫");
+    expect(makeSnippet("alphaZalpha!!!!", ["alpha"], 2)).toBe("⟪alpha⟫Z⟪alpha⟫…");
+  });
+
+  test("makeSnippet falls back to the head of the text", () => {
+    expect(makeSnippet("あ".repeat(100), ["zzz"], 32)).toBe(`${"あ".repeat(64)}…`);
+    expect(makeSnippet("短い", ["zzz"], 32)).toBe("短い");
   });
 
   test("makeSnippet keeps Markdown bold in the text distinguishable", () => {

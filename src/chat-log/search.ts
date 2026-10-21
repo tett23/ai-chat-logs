@@ -1,7 +1,5 @@
 // docs/adr/0011: the search rules of the GUI (docs/adr/0003, docs/adr/0005, gui/src-tauri/src/query.rs) in TypeScript.
 
-export const HIT_START = "";
-export const HIT_END = "";
 const MIN_INDEXED_CHARS = 3;
 
 export type SearchPlan = { fts: string | null; likes: string[]; terms: string[] };
@@ -33,24 +31,6 @@ const render = (runs: readonly Run[]): string =>
     .map((r) => (r.hit ? `${MARK_OPEN}${r.text}${MARK_CLOSE}` : r.text))
     .join("");
 
-// FTS5's snippet() delimiters (which may nest or touch) to ⟪⟫.
-export const highlight = (snippet: string): string => {
-  const runs: Run[] = [];
-  let depth = 0;
-  let text = "";
-  for (const c of snippet) {
-    if (c === HIT_START || c === HIT_END) {
-      runs.push({ text, hit: depth > 0 });
-      text = "";
-      depth = Math.max(0, depth + (c === HIT_START ? 1 : -1));
-    } else {
-      text += c;
-    }
-  }
-  runs.push({ text, hit: depth > 0 });
-  return render(runs);
-};
-
 const sameAscii = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase() || a === b;
 
 // Ranges [start, end) of non-overlapping occurrences of any term (ASCII case-insensitive, like LIKE).
@@ -75,18 +55,33 @@ const occurrences = (hay: readonly string[], terms: readonly string[][]): [numbe
   }
 };
 
-// A snippet around the first occurrence, for searches without an FTS5 query.
+// docs/adr/0018: a window of `context` characters on each side of the first occurrence of each
+// term, merged where they overlap or touch and widened so that no occurrence is cut, joined with
+// "…". Without any occurrence, the head of the text.
 export const makeSnippet = (text: string, terms: readonly string[], context: number): string => {
   const hay = [...text];
-  const hits = occurrences(hay, terms.map((t) => [...t]));
-  const first = hits[0];
-  const start = Math.max(0, (first?.[0] ?? 0) - context);
-  const end = Math.min(hay.length, first ? first[1] + context : context * 2);
-  const inWindow = hits.filter(([s, e]) => s >= start && e <= end);
-  const [pos, runs] = inWindow.reduce<[number, Run[]]>(
-    ([p, acc], [s, e]) => [e, [...acc, { text: hay.slice(p, s).join(""), hit: false }, { text: hay.slice(s, e).join(""), hit: true }]],
-    [start, []],
-  );
-  const body = render([...runs, { text: hay.slice(pos, end).join(""), hit: false }]);
-  return `${start > 0 ? "…" : ""}${body}${end < hay.length ? "…" : ""}`;
+  const needles = terms.map((t) => [...t]).filter((t) => t.length > 0);
+  const hits = occurrences(hay, needles);
+  const firsts = needles.flatMap((n) => occurrences(hay, [n]).slice(0, 1));
+  const widen = ([start, end]: [number, number]): [number, number] =>
+    hits.reduce<[number, number]>(([s, e], [hs, he]) => (hs < e && he > s ? [Math.min(s, hs), Math.max(e, he)] : [s, e]), [start, end]);
+  const windows = (firsts.length > 0 ? firsts.map(([s, e]): [number, number] => [Math.max(0, s - context), Math.min(hay.length, e + context)]) : [[0, Math.min(hay.length, context * 2)] as [number, number]])
+    .map(widen)
+    .toSorted((x, y) => x[0] - y[0])
+    .reduce<[number, number][]>((acc, w) => {
+      const last = acc[acc.length - 1];
+      return last && w[0] <= last[1] ? [...acc.slice(0, -1), [last[0], Math.max(last[1], w[1])]] : [...acc, w];
+    }, []);
+  const body = ([start, end]: [number, number]): string => {
+    const [pos, runs] = hits
+      .filter(([s, e]) => s >= start && e <= end)
+      .reduce<[number, Run[]]>(
+        ([p, acc], [s, e]) => [e, [...acc, { text: hay.slice(p, s).join(""), hit: false }, { text: hay.slice(s, e).join(""), hit: true }]],
+        [start, []],
+      );
+    return render([...runs, { text: hay.slice(pos, end).join(""), hit: false }]);
+  };
+  const first = windows[0] as [number, number];
+  const last = windows[windows.length - 1] as [number, number];
+  return `${first[0] > 0 ? "…" : ""}${windows.map(body).join("…")}${last[1] < hay.length ? "…" : ""}`;
 };

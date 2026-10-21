@@ -16,7 +16,7 @@ import {
   sessionIds,
   sessionMessages,
 } from "../chat-log/store.ts";
-import { matchSession, parseSince } from "../chat-log/values.ts";
+import { matchSession, parseTime } from "../chat-log/values.ts";
 import { loadEnvFile } from "../env.ts";
 import { defaultDatabasePath } from "../paths.ts";
 
@@ -34,6 +34,7 @@ const parse = (argv: string[]) => {
         cwd: { type: "string" },
         all: { type: "boolean", default: false },
         since: { type: "string" },
+        until: { type: "string" },
         limit: { type: "string" },
         offset: { type: "string" },
         "max-chars": { type: "string" },
@@ -64,14 +65,16 @@ const main = (argv: string[]): string => {
   if (v.help) return `${help}\n`;
 
   loadEnvFile();
-  const since = (() => {
+  const time = (value: string | undefined): string | undefined => {
     try {
-      return v.since === undefined ? undefined : parseSince(v.since);
+      return value === undefined ? undefined : parseTime(value);
     } catch (e) {
       return usage(e instanceof Error ? e.message : String(e));
     }
-  })();
-  const filter = (cwd: string | undefined): Filter => ({ provider: v.provider, cwd: cwd === undefined ? undefined : resolve(cwd), since });
+  };
+  const since = time(v.since);
+  const until = time(v.until);
+  const filter = (cwd: string | undefined): Filter => ({ provider: v.provider, cwd: cwd === undefined ? undefined : resolve(cwd), since, until });
   const db = openReadOnly(defaultDatabasePath(process.env));
   const offset = count(v.offset, "offset", 0);
 
@@ -92,7 +95,8 @@ const main = (argv: string[]): string => {
       if (match.kind === "none") throw exitError(1, `セッションが見つかりません: ${prefix}`);
       if (match.kind === "ambiguous") throw exitError(1, `セッションIDが区別できません: ${prefix}\n候補:\n${match.ids.join("\n")}`);
       const id = match.kind === "found" ? match.id : "";
-      const limit = count(v.limit, "limit", 50);
+      // docs/adr/0018: --around reads a few messages around a hit unless --limit says otherwise.
+      const limit = count(v.limit, "limit", v.around !== undefined ? 10 : 50);
       const maxChars = count(v["max-chars"], "max-chars", 2000);
       const total = messageCount(db, id);
       const from = v.around !== undefined ? Math.max(1, count(v.around, "around", 1) - Math.floor(limit / 2)) : offset + 1;

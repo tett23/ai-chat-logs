@@ -35,6 +35,7 @@ const s1 = [
 ];
 
 const SUB = "ssssssss-7777";
+const SNIP = "gggggggg-8888";
 
 // docs/adr/0013
 const T = "tttttttt-6666";
@@ -56,6 +57,8 @@ beforeAll(() => {
     // docs/adr/0016: a subagent's records interleave with the parent's in time
     ["p/sub.jsonl", jsonl(rec(SUB, "p1", "2026-06-01T00:00:00.000Z", "user", "親の最初", "/work/sub"), rec(SUB, "p2", "2026-06-01T00:02:00.000Z", "assistant", [{ type: "text", text: "親の最後" }], "/work/sub"))],
     ["p/sub/subagents/agent-1.jsonl", jsonl(rec(SUB, "q1", "2026-06-01T00:01:00.000Z", "assistant", [{ type: "text", text: "子の時系列の確認" }], "/work/sub"))],
+    // docs/adr/0018: terms far apart in one text
+    ["p/snip.jsonl", jsonl(rec(SNIP, "n1", "2026-05-01T00:00:00.000Z", "user", `apricot と梨${"ー".repeat(100)}blueberry と柿`, "/work/snip"))],
     ["p/f1.jsonl", jsonl(rec("ffffffff-0001", "f1", "2026-08-01T00:00:00.000Z", "user", "一つ目", "/work/f"))],
     ["p/f2.jsonl", jsonl(rec("ffffffff-0002", "f2", "2026-08-02T00:00:00.000Z", "user", "二つ目", "/work/f"))],
   ].map(([rel, content]) => ({ kind: "claude-code/transcript", path: writeFile(join(dir, "src", rel as string), content as string) }));
@@ -98,6 +101,8 @@ describe("chat-log sessions", () => {
     expect(ids(["--cwd", "/work/proj"])).toEqual(["bbbbbbbb", "aaaaaaaa"]);
     expect(ids(["--since", "2026-10-05T12:00:00Z"])).toEqual(["dddddddd", "cccccccc"]);
     expect(ids(["--limit", "1", "--offset", "1"])).toEqual(["cccccccc"]);
+    // docs/adr/0018: sessions that overlap the period
+    expect(ids(["--since", "2026-10-04", "--until", "2026-10-06T12:00:00Z"])).toEqual(["cccccccc", "bbbbbbbb"]);
   });
 
   test("--json prints one object per line", () => {
@@ -326,3 +331,36 @@ describe("numbering in time order (docs/adr/0016)", () => {
   });
 });
 
+
+// docs/adr/0018
+describe("chat-log snippets, --until, --around and the help terms", () => {
+  const partial = /⟪[^⟫]*⟫/g;
+  test("every term of an AND search is marked, long or short, and never in part", () => {
+    const long = lines(chatLog(["search", "apricot", "blueberry"]).out)[1] as string;
+    expect(long).toContain("⟪apricot⟫");
+    expect(long).toContain("⟪blueberry⟫");
+    expect(long.match(partial)).toEqual(["⟪apricot⟫", "⟪blueberry⟫"]);
+    const short = lines(chatLog(["search", "梨", "柿", "--cwd", "/work/snip"]).out)[1] as string;
+    expect(short.match(partial)).toEqual(["⟪梨⟫", "⟪柿⟫"]);
+  });
+
+  test("--until keeps messages before the time", () => {
+    const ids = (args: string[]) => lines(chatLog(["search", "全文検索", ...args]).out).filter((l) => !l.startsWith("\t")).map((l) => l.split("\t")[2]);
+    expect(ids(["--until", "2026-10-06T00:00:00Z"])).toEqual(["aaaaaaaa#1"]);
+    expect(ids(["--since", "2026-10-02", "--until", "2026-10-07"])).toEqual(["cccccccc#1"]);
+    expect(chatLog(["search", "全文検索", "--until", "someday"]).code).toBe(2);
+  });
+
+  test("show --around defaults to 10 messages, 5 before", () => {
+    const heads = (args: string[]) => lines(chatLog(["show", BIG, "--max-chars", "5", ...args]).out).filter((l) => l.startsWith("## #")).map((l) => l.split(" ")[1]);
+    expect(heads(["--around", "50"])).toEqual(["#45", "#46", "#47", "#48", "#49", "#50", "#51", "#52", "#53", "#54"]);
+    expect(heads(["--around", "50", "--limit", "3"])).toEqual(["#49", "#50", "#51"]);
+    expect(heads([])).toHaveLength(50);
+  });
+
+  test("the help defines 写し and the message number, and explains --until and the time formats", () => {
+    const help = chatLog(["--help"]).out;
+    ["用語:", "写し:", "メッセージの番号:", "--until <時刻>", "UTC の 0 時", "手元の時刻帯"].forEach((s) => expect(help).toContain(s));
+    expect(chatLog(["show", "--help"]).out).toContain("--around を付けて --limit が無いときは 10");
+  });
+});

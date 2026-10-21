@@ -2,7 +2,7 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { type Block, toBlocks } from "./blocks.ts";
-import { HIT_END, HIT_START, highlight, makeSnippet, type SearchPlan } from "./search.ts";
+import { makeSnippet, type SearchPlan } from "./search.ts";
 
 export const REQUIRED_SCHEMA_VERSION = 3;
 
@@ -23,16 +23,18 @@ export const openReadOnly = (path: string): Database => {
   return db;
 };
 
-export type Filter = { provider?: string; cwd?: string; since?: string };
+export type Filter = { provider?: string; cwd?: string; since?: string; until?: string };
 
 const escapeLike = (s: string): string => s.replace(/[%_\\]/g, (c) => `\\${c}`);
 
-// SQL conditions and parameters of a filter; `table` holds provider and cwd, `time` the compared time column.
-const conditions = (f: Filter, provider: string, cwd: string, time: string): [string[], SQLQueryBindings[]] => {
+// SQL conditions and parameters of a filter; `time` is compared with --since and `start` with --until
+// (docs/adr/0018: for sessions, the first time, so that sessions overlapping the period remain).
+const conditions = (f: Filter, provider: string, cwd: string, time: string, start: string = time): [string[], SQLQueryBindings[]] => {
   const parts: [string, SQLQueryBindings[]][] = [
     ...(f.provider ? [[`${provider} = ?`, [f.provider]] as [string, SQLQueryBindings[]]] : []),
     ...(f.cwd ? [[`(${cwd} = ? OR ${cwd} LIKE ? ESCAPE '\\')`, [f.cwd, `${escapeLike(f.cwd.replace(/\/+$/, ""))}/%`]] as [string, SQLQueryBindings[]]] : []),
     ...(f.since ? [[`${time} > ?`, [f.since]] as [string, SQLQueryBindings[]]] : []),
+    ...(f.until ? [[`${start} < ?`, [f.until]] as [string, SQLQueryBindings[]]] : []),
   ];
   return [parts.map(([c]) => c), parts.flatMap(([, p]) => p)];
 };
@@ -50,7 +52,7 @@ export type Session = {
 };
 
 export const listSessions = (db: Database, f: Filter, limit: number, offset: number): Session[] => {
-  const [clauses, params] = conditions(f, "provider", "cwd", "last_at");
+  const [clauses, params] = conditions(f, "provider", "cwd", "last_at", "first_at");
   return db
     .query<Session, SQLQueryBindings[]>(
       `SELECT provider, session_id, title, cwd, first_at, last_at, message_count FROM session_summaries
@@ -167,7 +169,6 @@ const indexesOf = (db: Database, rows: readonly { provider: string; session_id: 
 
 export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number, offset: number): Hit[] => {
   if (plan.terms.length === 0) return [];
-  const snippet = plan.fts !== null ? `snippet(record_texts, 0, '${HIT_START}', '${HIT_END}', '…', 16)` : "record_texts.text";
   const [filterClauses, filterParams] = conditions(f, "s.provider", "ss.cwd", "r.timestamp");
   const clauses = [
     ...(plan.fts !== null ? ["record_texts MATCH ?"] : []),
@@ -179,7 +180,7 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
   type Row = { provider: string; session_id: string | null; uuid: string | null; timestamp: string | null; role: string | null; title: string | null; snip: string; rid: number; raw: string };
   const rows = db
     .query<Row, SQLQueryBindings[]>(
-      `SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role' AS role, ss.title, ${snippet} AS snip, r.rowid AS rid, r.raw
+      `SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role' AS role, ss.title, record_texts.text AS snip, r.rowid AS rid, r.raw
        FROM record_texts
        JOIN records r ON r.rowid = record_texts.rowid
        JOIN sources s ON s.id = r.source_id
@@ -197,7 +198,7 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
     timestamp: row.timestamp,
     role: row.role,
     title: row.title,
-    snippet: plan.fts !== null ? highlight(row.snip) : makeSnippet(row.snip, plan.terms, SNIPPET_CONTEXT),
+    snippet: makeSnippet(row.snip, plan.terms, SNIPPET_CONTEXT),
     matched_in: matchedIn(row.raw, plan.terms),
   }));
 };
