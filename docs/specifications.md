@@ -69,7 +69,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
-- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は3）。
+- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は4）。
 
 | 表・ビュー | 中身 |
 |---|---|
@@ -82,9 +82,11 @@ ai-chat-logs の現行の仕様をまとめる。
 | `session_summaries` | セッションの要約（提供元、セッションID、`cwd`、タイトル、最初と最後の時刻、メッセージの数） |
 | `record_text_source`（ビュー） | 本文の取り出しの規則 |
 | `copied_records`（ビュー） | 別のファイルに写された、同じ提供元・セッション・`uuid` のレコードのうち、2つ目以降のもの |
-| `session_messages`（ビュー） | セッションのメッセージ（写しを除く） |
+| `session_messages`（ビュー） | セッションのメッセージ（写しを除く。写しの規則は `copied_records` と同じものを、索引で覆えるように直接書く。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)） |
 | `session_summary_source`（ビュー） | 要約の作り方 |
 | `messages`（ビュー） | 会話のメッセージ。いまは `claude-code/transcript` の `user` と `assistant` のレコード（提供元、セッションID、`uuid`、親の `uuid`、時刻、役割、モデル、サイドチェーンか、`cwd`、内容、元のパス） |
+
+- `records` の索引：`(session_id, timestamp)`、`(session_id, type, timestamp, uuid, source_id, line_no)`、`(uuid, session_id, source_id, line_no)`。後ろの2つで、セッションのメッセージの選び出しと写しの判定を、`records` の本体を読まずに行う（`type` と `uuid` は `raw` の後ろの列で、読むと `raw` のオーバーフローのページをたどるため。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)）。
 
 ### 検索の索引とセッションの要約
 
@@ -121,7 +123,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - `gui/`。Tauri 2、Rust（`rusqlite`）、TypeScript（フレームワークなし）、Tailwind CSS 4。
 - データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`（環境変数、`.env`、設定ファイルの順。[ADR 0007](adr/0007-settings-and-setup-screen.md)）、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
-- コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_messages`（`session_id`、`from`、`limit`。写しを除いたメッセージに、時刻（`timestamp`）の順（同じ時刻はパス・`generation`・行番号の順）で1始まりの番号を付け、番号が `from`〜`from + limit - 1` のものと、総数（`session_summaries` のメッセージ数）を返す。[ADR 0014](adr/0014-load-conversations-in-pages.md)、[ADR 0016](adr/0016-show-conversations-newest-first.md)）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順。各件にメッセージの番号 `index`）。
+- コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_messages`（`session_id`、`from`、`limit`。写しを除いたメッセージに、時刻（`timestamp`）の順（同じ時刻はパス・`generation`・行番号の順）で1始まりの番号を付け、番号が `from`〜`from + limit - 1` のものと、総数（`session_summaries` のメッセージ数）を返す。[ADR 0014](adr/0014-load-conversations-in-pages.md)、[ADR 0016](adr/0016-show-conversations-newest-first.md)）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順。各件にメッセージの番号 `index`。番号は、1ページのヒットをセッションごとにまとめて1回で求める。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)）。
 - 会話の並び：メッセージを新しい順（番号の大きい順）に出す。いちばん上が最後のメッセージ。1つのメッセージの中のブロックの順は変えない（[ADR 0016](adr/0016-show-conversations-newest-first.md)）。
 - 会話の読みこみ：1ページ100件。一覧から開くと最後の1ページ（`総数 − 99`〜総数。総数は一覧のメッセージ数で、読みこんだ結果の総数と違えばその総数で読みこみなおす）、検索の結果から開くと一致した番号 N の 50 件前から100件。会話の欄の下端の 600px 以内までスクロールすると古い1ページを下に、上端の 600px 以内までスクロールすると新しい1ページを上に足す（上に足したときは、見ていた位置を保つ）。読みこんだメッセージは DOM から外さない。別のセッションを開いたら、前のセッションの読みこみの結果は捨てる。
 - プロジェクトの絞り込み：Claude Code は `cwd` ごと、ほかの提供元は提供元ごとに1項目。一覧と検索の結果に、Claude Code 以外の提供元の名前を出す。

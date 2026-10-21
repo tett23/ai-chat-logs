@@ -4,9 +4,10 @@ import { dirname } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
 import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
 import otherProviders from "../schema/0003-other-providers.sql" with { type: "text" };
+import sessionMessageIndexes from "../schema/0004-session-message-indexes.sql" with { type: "text" };
 
 // docs/adr/0001: migrations are applied in order; PRAGMA user_version holds the applied count.
-const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders];
+const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders, sessionMessageIndexes];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 

@@ -143,20 +143,25 @@ const matchedIn = (raw: string, terms: readonly string[]): ("text" | "thinking")
 
 const SNIPPET_CONTEXT = 32;
 
-// The number `show` gives to a record.
-const indexOf = (db: Database, rowid: number): number | null => {
-  const at = db
-    .query<{ provider: string; session_id: string; time: string; path: string; generation: number; line_no: number }, [number]>(
-      "SELECT provider, session_id, coalesce(timestamp, '') time, path, generation, line_no FROM session_messages WHERE record_rowid = ?",
-    )
-    .get(rowid);
-  if (!at) return null;
-  return (
-    db
-      .query<{ n: number }, [string, string, string, string, number, number]>(
-        "SELECT count(*) n FROM session_messages WHERE provider = ? AND session_id = ? AND (coalesce(timestamp, ''), path, generation, line_no) <= (?, ?, ?, ?)",
-      )
-      .get(at.provider, at.session_id, at.time, at.path, at.generation, at.line_no)?.n ?? null
+// The numbers `show` gives to the records of `rows`, one query per session (docs/adr/0017).
+// A record that is not a message (a copy) has no number.
+const indexesOf = (db: Database, rows: readonly { provider: string; session_id: string | null; rid: number }[]): Map<number, number> => {
+  const query = db.query<{ record_rowid: number; n: number }, [string, string, string]>(
+    `SELECT record_rowid, n FROM (
+       SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) n
+       FROM session_messages WHERE provider = ? AND session_id = ?)
+     WHERE record_rowid IN (SELECT value FROM json_each(?))`,
+  );
+  const sessions = Map.groupBy(
+    rows.flatMap((r) => (r.session_id === null ? [] : [{ ...r, session_id: r.session_id }])),
+    (r) => JSON.stringify([r.provider, r.session_id]),
+  );
+  return new Map(
+    [...sessions.values()].flatMap((hits) =>
+      query
+        .all(hits[0]?.provider ?? "", hits[0]?.session_id ?? "", JSON.stringify(hits.map((h) => h.rid)))
+        .map((r) => [r.record_rowid, r.n] as const),
+    ),
   );
 };
 
@@ -172,7 +177,7 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
   ];
   const params: SQLQueryBindings[] = [...(plan.fts !== null ? [plan.fts] : []), ...plan.likes, ...filterParams, limit, offset];
   type Row = { provider: string; session_id: string | null; uuid: string | null; timestamp: string | null; role: string | null; title: string | null; snip: string; rid: number; raw: string };
-  return db
+  const rows = db
     .query<Row, SQLQueryBindings[]>(
       `SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role' AS role, ss.title, ${snippet} AS snip, r.rowid AS rid, r.raw
        FROM record_texts
@@ -182,16 +187,17 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
        WHERE ${clauses.join(" AND ")}
        ORDER BY r.timestamp DESC, r.rowid DESC LIMIT ? OFFSET ?`,
     )
-    .all(...params)
-    .map((row) => ({
-      provider: row.provider,
-      session_id: row.session_id,
-      index: indexOf(db, row.rid),
-      uuid: row.uuid,
-      timestamp: row.timestamp,
-      role: row.role,
-      title: row.title,
-      snippet: plan.fts !== null ? highlight(row.snip) : makeSnippet(row.snip, plan.terms, SNIPPET_CONTEXT),
-      matched_in: matchedIn(row.raw, plan.terms),
-    }));
+    .all(...params);
+  const indexes = indexesOf(db, rows);
+  return rows.map((row) => ({
+    provider: row.provider,
+    session_id: row.session_id,
+    index: indexes.get(row.rid) ?? null,
+    uuid: row.uuid,
+    timestamp: row.timestamp,
+    role: row.role,
+    title: row.title,
+    snippet: plan.fts !== null ? highlight(row.snip) : makeSnippet(row.snip, plan.terms, SNIPPET_CONTEXT),
+    matched_in: matchedIn(row.raw, plan.terms),
+  }));
 };
