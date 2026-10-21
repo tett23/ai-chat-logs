@@ -97,6 +97,14 @@ describe("blocks", () => {
 
   const options = { thinking: false, tools: false, maxChars: 2000 };
 
+  // docs/adr/0019: thinking kept with only a signature has an empty body.
+  test("renderBlock never shows a thinking block with an empty body", () => {
+    const thinking = { ...options, thinking: true };
+    expect(renderBlock({ kind: "thinking", text: "" }, thinking)).toBeNull();
+    expect(renderBlock({ kind: "thinking", text: "  \n" }, thinking)).toBeNull();
+    expect(renderBlock({ kind: "thinking", text: "考え" }, thinking)).toBe("[thinking] 考え");
+  });
+
   test("renderBlock shows text, hides thinking by default and summarizes tools", () => {
     expect(renderBlock({ kind: "text", text: "本文" }, options)).toBe("本文");
     expect(renderBlock({ kind: "thinking", text: "考え" }, options)).toBeNull();

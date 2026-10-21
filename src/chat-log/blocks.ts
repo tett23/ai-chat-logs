@@ -66,7 +66,8 @@ export const renderBlock = (block: Block, o: RenderOptions): string | null => {
     case "text":
       return truncate(block.text.trimEnd(), o.maxChars);
     case "thinking":
-      return o.thinking ? `[thinking] ${truncate(block.text.trimEnd(), o.maxChars)}` : null;
+      // docs/adr/0019: thinking kept with only a signature has an empty body and is never shown.
+      return o.thinking && block.text.trim() !== "" ? `[thinking] ${truncate(block.text.trimEnd(), o.maxChars)}` : null;
     case "tool_use":
       return o.tools ? `[tool_use ${block.name}]\n${truncate(block.input, o.maxChars)}` : `[tool_use ${block.name}] ${oneLine(block.input)}`;
     case "tool_result":

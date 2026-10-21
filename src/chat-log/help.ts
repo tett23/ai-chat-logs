@@ -46,7 +46,7 @@ const SEARCH = `chat-log search <語...> [オプション]
     	<抜粋>
   思考（thinking）にだけ一致したときは、抜粋の先頭に [thinking] が付く。
   <セッションIDの先頭8文字> と <メッセージの番号> は、そのまま show と show --around に渡せる。
-  show --around はその番号のメッセージの思考も出すので、[thinking] の付いた結果もそのまま読める。
+  show --around はその範囲のメッセージの思考も出すので、[thinking] の付いた結果もそのまま読める。
   --json: provider、session_id、index、uuid、timestamp、role、title、snippet、matched_in（["text"]、["thinking"]、["text","thinking"]）`;
 
 const SHOW = `chat-log show <セッションID> [オプション]
@@ -54,7 +54,7 @@ const SHOW = `chat-log show <セッションID> [オプション]
   メッセージの番号は、そのセッションの中の通し番号（1始まり、時刻の順）。
   --around <番号>       その番号を含む --limit 件を出す。番号の前に --limit の半分（切り捨て）件を置く。
                         --limit 1 ならその番号の1件だけ。search の #<番号> をそのまま渡せる。
-                        その番号のメッセージは、--thinking が無くても思考を出す
+                        その範囲のメッセージの思考も、--thinking が無くても出す
   --thinking            思考（thinking）を出す（既定では出さない）
   --tools               ツールの入出力を全文で出す（既定では1行・200文字に要約する）
   既定ではプロジェクトに絞らない（セッションIDで決まるため --cwd は要らない）。
@@ -66,6 +66,7 @@ const SHOW = `chat-log show <セッションID> [オプション]
     [tool_result] <出力の先頭200文字>
     [<その他のブロックの種類>]
   画像などのテキストでないブロックは [<種類>]、200文字以上の base64 は [base64 <文字数> 文字] になる（--tools でも）。
+  本文が空の思考（署名だけが残ったもの。思考の大半）は、--thinking や --around があっても出さない。
   表示するものが無いメッセージ（思考だけのものなど）は出さない。番号は詰めないので、番号の飛びは省いたメッセージ。
   --limit は番号の範囲で数える（省いたメッセージも数える）。
   続きがあるときは最後に「（続き：#<次の番号> から。--offset <数> で出す）」の行。--around のときも、その --offset で続きを出せる。

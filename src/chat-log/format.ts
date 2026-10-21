@@ -22,11 +22,12 @@ export const messageText = (m: Message, o: RenderOptions): string | null => {
 
 export type Page = { from: number; to: number; total: number; center: number | null; previous: boolean };
 
-// Messages of a page; the center message (show --around) shows its thinking. Lines tell how to read
-// the messages before and after the page.
+// Messages of a page; with show --around every message of the page shows its thinking
+// (docs/adr/0019). Lines tell how to read the messages before and after the page.
 export const messagesText = (messages: readonly Message[], o: RenderOptions, page: Page): string => {
+  const options = page.center !== null ? { ...o, thinking: true } : o;
   const shown = messages
-    .map((m) => messageText(m, m.index === page.center ? { ...o, thinking: true } : o))
+    .map((m) => messageText(m, options))
     .filter((t): t is string => t !== null);
   const before = page.previous && page.from > 1 ? [`（前：#1〜#${page.from - 1} は --offset 0 で出す）`] : [];
   const after = page.to < page.total ? [`（続き：#${page.to + 1} から。--offset ${page.to} で出す）`] : [];
