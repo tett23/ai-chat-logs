@@ -1,6 +1,6 @@
 # ADR 0013: chat-log の出力の修正
 
-ステータス: 採択
+ステータス: 採択→中心以外の思考の扱いは[ADR 0019](0019-chat-log-thinking-around-hits.md)
 
 ## 文脈
 

@@ -36,6 +36,7 @@ const s1 = [
 
 const SUB = "ssssssss-7777";
 const SNIP = "gggggggg-8888";
+const EMPTY = "hhhhhhhh-9999";
 
 // docs/adr/0013
 const T = "tttttttt-6666";
@@ -57,6 +58,14 @@ beforeAll(() => {
     // docs/adr/0016: a subagent's records interleave with the parent's in time
     ["p/sub.jsonl", jsonl(rec(SUB, "p1", "2026-06-01T00:00:00.000Z", "user", "親の最初", "/work/sub"), rec(SUB, "p2", "2026-06-01T00:02:00.000Z", "assistant", [{ type: "text", text: "親の最後" }], "/work/sub"))],
     ["p/sub/subagents/agent-1.jsonl", jsonl(rec(SUB, "q1", "2026-06-01T00:01:00.000Z", "assistant", [{ type: "text", text: "子の時系列の確認" }], "/work/sub"))],
+    // docs/adr/0019: thinking with and without a body
+    ["p/empty.jsonl", jsonl(
+      rec(EMPTY, "h1", "2026-04-01T00:00:00.000Z", "user", "空の思考の確認", "/work/empty"),
+      rec(EMPTY, "h2", "2026-04-01T00:01:00.000Z", "assistant", [{ type: "thinking", thinking: "" }], "/work/empty"),
+      rec(EMPTY, "h3", "2026-04-01T00:02:00.000Z", "assistant", [{ type: "thinking", thinking: "  " }, { type: "text", text: "空でない本文" }], "/work/empty"),
+      rec(EMPTY, "h4", "2026-04-01T00:03:00.000Z", "assistant", [{ type: "thinking", thinking: "前後の考え" }], "/work/empty"),
+      rec(EMPTY, "h5", "2026-04-01T00:04:00.000Z", "user", "最後", "/work/empty"),
+    )],
     // docs/adr/0018: terms far apart in one text
     ["p/snip.jsonl", jsonl(rec(SNIP, "n1", "2026-05-01T00:00:00.000Z", "user", `apricot と梨${"ー".repeat(100)}blueberry と柿`, "/work/snip"))],
     ["p/f1.jsonl", jsonl(rec("ffffffff-0001", "f1", "2026-08-01T00:00:00.000Z", "user", "一つ目", "/work/f"))],
@@ -281,8 +290,9 @@ describe("chat-log output corrections (docs/adr/0013)", () => {
     expect(json(chatLog(["search", "太字の語", "--json"]).out)[0].matched_in).toEqual(["text"]);
     const around = chatLog(["show", T, "--around", "2", "--limit", "3"]).out;
     expect(around).toContain("[thinking] 内緒の検討メモ");
+    // docs/adr/0019: the thinking of the other messages of the range shows too
     const notCenter = chatLog(["show", T, "--around", "3", "--limit", "3"]).out;
-    expect(notCenter).not.toContain("内緒の検討メモ");
+    expect(notCenter).toContain("[thinking] 内緒の検討メモ");
   });
 
   test("messages with nothing to show are left out of the text, keeping the numbers", () => {
@@ -362,5 +372,37 @@ describe("chat-log snippets, --until, --around and the help terms", () => {
     const help = chatLog(["--help"]).out;
     ["用語:", "写し:", "メッセージの番号:", "--until <時刻>", "UTC の 0 時", "手元の時刻帯"].forEach((s) => expect(help).toContain(s));
     expect(chatLog(["show", "--help"]).out).toContain("--around を付けて --limit が無いときは 10");
+  });
+});
+
+// docs/adr/0019
+describe("chat-log thinking around a hit", () => {
+  const heads = (out: string) => lines(out).filter((l) => l.startsWith("## #")).map((l) => l.split(" ")[1]);
+  const emptyThinking = (out: string) => lines(out).filter((l) => l.trim() === "[thinking]");
+
+  test("show --around shows the thinking of every message in the range", () => {
+    const out = chatLog(["show", EMPTY, "--around", "1"]).out;
+    expect(out).toContain("[thinking] 前後の考え");
+    expect(heads(out)).toEqual(["#1", "#3", "#4", "#5"]);
+    expect(emptyThinking(out)).toEqual([]);
+  });
+
+  test("without --around, thinking shows only with --thinking, and empty thinking never", () => {
+    const plain = chatLog(["show", EMPTY]).out;
+    expect(plain).not.toContain("前後の考え");
+    expect(heads(plain)).toEqual(["#1", "#3", "#5"]);
+    const thinking = chatLog(["show", EMPTY, "--thinking"]).out;
+    expect(heads(thinking)).toEqual(["#1", "#3", "#4", "#5"]);
+    expect(emptyThinking(thinking)).toEqual([]);
+  });
+
+  test("--json keeps empty thinking blocks", () => {
+    const second = json(chatLog(["show", EMPTY, "--json"]).out)[1];
+    expect(second.blocks).toEqual([{ kind: "thinking", text: "" }]);
+  });
+
+  test("the help explains the thinking of --around and the empty thinking", () => {
+    const help = chatLog(["show", "--help"]).out;
+    ["その範囲のメッセージの思考も", "本文が空の思考"].forEach((s) => expect(help).toContain(s));
   });
 });
