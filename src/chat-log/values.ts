@@ -3,7 +3,8 @@
 const UNITS: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000 };
 
 // "7d", "12h", "30m", or an ISO 8601 date or time; returns an ISO 8601 time in UTC.
-export const parseSince = (input: string, now: number = Date.now()): string => {
+// --since and --until (docs/adr/0018).
+export const parseTime = (input: string, now: number = Date.now()): string => {
   const relative = /^(\d+)([dhm])$/.exec(input);
   if (relative) return new Date(now - Number(relative[1]) * (UNITS[relative[2] as string] as number)).toISOString();
   const time = /^\d{4}-\d{2}-\d{2}/.test(input) ? Date.parse(input) : Number.NaN;
