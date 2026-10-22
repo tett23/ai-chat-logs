@@ -177,8 +177,11 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
     `SELECT rowid AS rid, text, ${tool} AS tool FROM ${table} WHERE ${[
       ...(plan.fts !== null ? [`${table} MATCH ?`] : []),
       ...plan.likes.map(() => "text LIKE ? ESCAPE '\\'"),
+      // docs/adr/0022: excluded terms, looked for in the same text
+      ...(plan.notFts !== null ? [`rowid NOT IN (SELECT rowid FROM ${table} WHERE ${table} MATCH ?)`] : []),
+      ...plan.notLikes.map(() => "text NOT LIKE ? ESCAPE '\\'"),
     ].join(" AND ")}`,
-    [...(plan.fts !== null ? [plan.fts] : []), ...plan.likes],
+    [...(plan.fts !== null ? [plan.fts] : []), ...plan.likes, ...(plan.notFts !== null ? [plan.notFts] : []), ...plan.notLikes],
   ];
   const branches = [branch("record_texts", 0), ...(tools ? [branch("record_tool_texts", 1)] : [])];
   const clauses = ["NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid)", ...filterClauses];

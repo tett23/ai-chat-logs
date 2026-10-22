@@ -38,6 +38,7 @@ const SUB = "ssssssss-7777";
 const SNIP = "gggggggg-8888";
 const EMPTY = "hhhhhhhh-9999";
 const TOOL = "iiiiiiii-0000";
+const EXC = "jjjjjjjj-1111";
 
 // docs/adr/0013
 const T = "tttttttt-6666";
@@ -59,6 +60,12 @@ beforeAll(() => {
     // docs/adr/0016: a subagent's records interleave with the parent's in time
     ["p/sub.jsonl", jsonl(rec(SUB, "p1", "2026-06-01T00:00:00.000Z", "user", "親の最初", "/work/sub"), rec(SUB, "p2", "2026-06-01T00:02:00.000Z", "assistant", [{ type: "text", text: "親の最後" }], "/work/sub"))],
     ["p/sub/subagents/agent-1.jsonl", jsonl(rec(SUB, "q1", "2026-06-01T00:01:00.000Z", "assistant", [{ type: "text", text: "子の時系列の確認" }], "/work/sub"))],
+    // docs/adr/0022: a defined term that is also an everyday word
+    ["p/exc.jsonl", jsonl(
+      rec(EXC, "j1", "2026-02-01T00:00:00.000Z", "user", "写しの規則を決めた", "/work/exc"),
+      rec(EXC, "j2", "2026-02-01T00:01:00.000Z", "user", "ファイルに写してから確認", "/work/exc"),
+      rec(EXC, "j3", "2026-02-01T00:02:00.000Z", "user", "写しの見本 ZZZ 付き", "/work/exc"),
+    )],
     // docs/adr/0021: texts that are only in tools
     ["p/tool.jsonl", jsonl(
       rec(TOOL, "i1", "2026-03-01T00:00:00.000Z", "user", "ツールの確認", "/work/tool"),
@@ -497,5 +504,33 @@ describe("chat-log search --tools", () => {
   test("the help explains --tools for search and [tool]", () => {
     const help = chatLog(["search", "--help"]).out;
     ["--tools", "[tool]"].forEach((s) => expect(help).toContain(s));
+  });
+});
+
+// docs/adr/0022
+describe("chat-log search --exclude", () => {
+  const ids = (args: string[]) =>
+    lines(chatLog(["search", ...args, "--cwd", "/work/exc"]).out).filter((l) => !l.startsWith("\t")).map((l) => l.split("\t")[2]);
+
+  test("messages containing an excluded term are left out", () => {
+    expect(ids(["写し"])).toEqual(["jjjjjjjj#3", "jjjjjjjj#2", "jjjjjjjj#1"]);
+    expect(ids(["写し", "--exclude", "写して"])).toEqual(["jjjjjjjj#3", "jjjjjjjj#1"]);
+  });
+
+  test("long (FTS5) and short (LIKE) excluded terms, any of several, ignoring ASCII case", () => {
+    expect(ids(["写し", "--exclude", "写して", "--exclude", "ZZ"])).toEqual(["jjjjjjjj#1"]);
+    expect(ids(["写し", "--exclude", "zzz"])).toEqual(["jjjjjjjj#2", "jjjjjjjj#1"]);
+    expect(ids(["写し", "--exclude", "zz"])).toEqual(["jjjjjjjj#2", "jjjjjjjj#1"]);
+  });
+
+  test("only the terms are marked, and --exclude without terms is a usage error", () => {
+    const out = chatLog(["search", "写し", "--exclude", "ZZ", "--cwd", "/work/exc"]).out;
+    expect(out).toContain("⟪写し⟫てから");
+    expect(chatLog(["search", "--exclude", "写して"]).code).toBe(2);
+  });
+
+  test("the help explains --exclude with an example", () => {
+    const help = chatLog(["--help"]).out;
+    ["--exclude <語>", "chat-log search 写し --exclude 写して --exclude 写す"].forEach((s) => expect(help).toContain(s));
   });
 });

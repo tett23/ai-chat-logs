@@ -2,16 +2,27 @@
 
 const MIN_INDEXED_CHARS = 3;
 
-export type SearchPlan = { fts: string | null; likes: string[]; terms: string[] };
+// docs/adr/0022: notFts and notLikes leave out texts with any excluded term (long ones with FTS5,
+// short ones with NOT LIKE).
+export type SearchPlan = { fts: string | null; likes: string[]; terms: string[]; notFts: string | null; notLikes: string[] };
 
 const ftsPhrase = (term: string): string => `"${term.replaceAll('"', '""')}"`;
 const likePattern = (term: string): string => `%${term.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 
-export const planSearch = (input: string): SearchPlan => {
+const isLong = (t: string): boolean => [...t].length >= MIN_INDEXED_CHARS;
+
+export const planSearch = (input: string, excluded: readonly string[] = []): SearchPlan => {
   const terms = input.split(/\s+/).filter((t) => t !== "");
-  const long = terms.filter((t) => [...t].length >= MIN_INDEXED_CHARS);
-  const short = terms.filter((t) => [...t].length < MIN_INDEXED_CHARS);
-  return { fts: long.length > 0 ? long.map(ftsPhrase).join(" AND ") : null, likes: short.map(likePattern), terms };
+  const long = terms.filter(isLong);
+  const notTerms = excluded.filter((t) => t !== "");
+  const notLong = notTerms.filter(isLong);
+  return {
+    fts: long.length > 0 ? long.map(ftsPhrase).join(" AND ") : null,
+    likes: terms.filter((t) => !isLong(t)).map(likePattern),
+    terms,
+    notFts: notLong.length > 0 ? notLong.map(ftsPhrase).join(" OR ") : null,
+    notLikes: notTerms.filter((t) => !isLong(t)).map(likePattern),
+  };
 };
 
 // docs/adr/0013: hits are marked with ⟪⟫, which the texts do not contain, rather than Markdown's **.
