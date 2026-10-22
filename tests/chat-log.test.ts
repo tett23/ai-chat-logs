@@ -37,6 +37,7 @@ const s1 = [
 const SUB = "ssssssss-7777";
 const SNIP = "gggggggg-8888";
 const EMPTY = "hhhhhhhh-9999";
+const TOOL = "iiiiiiii-0000";
 
 // docs/adr/0013
 const T = "tttttttt-6666";
@@ -58,6 +59,15 @@ beforeAll(() => {
     // docs/adr/0016: a subagent's records interleave with the parent's in time
     ["p/sub.jsonl", jsonl(rec(SUB, "p1", "2026-06-01T00:00:00.000Z", "user", "親の最初", "/work/sub"), rec(SUB, "p2", "2026-06-01T00:02:00.000Z", "assistant", [{ type: "text", text: "親の最後" }], "/work/sub"))],
     ["p/sub/subagents/agent-1.jsonl", jsonl(rec(SUB, "q1", "2026-06-01T00:01:00.000Z", "assistant", [{ type: "text", text: "子の時系列の確認" }], "/work/sub"))],
+    // docs/adr/0021: texts that are only in tools
+    ["p/tool.jsonl", jsonl(
+      rec(TOOL, "i1", "2026-03-01T00:00:00.000Z", "user", "ツールの確認", "/work/tool"),
+      rec(TOOL, "i2", "2026-03-01T00:01:00.000Z", "assistant", [
+        { type: "text", text: "編集します 両方語句 分割A語" },
+        { type: "tool_use", id: "x1", name: "Edit", input: { file_path: "docs/x.md", new_string: "決定の文面は道具箱にだけある 両方語句 分割B語" } },
+      ], "/work/tool"),
+      rec(TOOL, "i3", "2026-03-01T00:02:00.000Z", "user", [{ type: "tool_result", tool_use_id: "x1", content: "道具箱の結果" }], "/work/tool"),
+    )],
     // docs/adr/0019: thinking with and without a body
     ["p/empty.jsonl", jsonl(
       rec(EMPTY, "h1", "2026-04-01T00:00:00.000Z", "user", "空の思考の確認", "/work/empty"),
@@ -449,5 +459,43 @@ describe("chat-log --around navigation lines", () => {
   test("the help explains the previous line and --limit 1", () => {
     const help = chatLog(["show", "--help"]).out;
     ["直前の同じ件数の範囲", "--limit 1 のときは、前と続きの行を出さない"].forEach((s) => expect(help).toContain(s));
+  });
+});
+
+// docs/adr/0021
+describe("chat-log search --tools", () => {
+  const ids = (args: string[]) => lines(chatLog(["search", ...args]).out).filter((l) => !l.startsWith("\t")).map((l) => l.split("\t")[2]);
+
+  test("texts only in tools are found with --tools and marked [tool]", () => {
+    expect(ids(["道具箱"])).toEqual([]);
+    const out = lines(chatLog(["search", "道具箱", "--tools"]).out);
+    expect(out.filter((l) => !l.startsWith("\t")).map((l) => l.split("\t")[2])).toEqual(["iiiiiiii#3", "iiiiiiii#2"]);
+    expect(out[1]).toBe("\t[tool] ⟪道具箱⟫の結果");
+    expect(json(chatLog(["search", "道具箱", "--tools", "--json"]).out)[0].matched_in).toEqual(["tool"]);
+  });
+
+  test("a record matching in both its text and its tools shows once, without [tool]", () => {
+    const out = lines(chatLog(["search", "両方語句", "--tools"]).out);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toContain("iiiiiiii#2");
+    expect(out[1]?.startsWith("\t[tool]")).toBe(false);
+  });
+
+  test("short terms are found with --tools; terms split between text and tools are not", () => {
+    expect(ids(["道具", "--tools", "--cwd", "/work/tool"])).toEqual(["iiiiiiii#3", "iiiiiiii#2"]);
+    expect(ids(["分割A語", "分割B語", "--tools"])).toEqual([]);
+  });
+
+  test("a database of version 4 exits 2", () => {
+    const oldPath = join(tempDir(), "v4.sqlite");
+    const old = openDatabase(oldPath);
+    old.run("PRAGMA user_version = 4");
+    old.close();
+    expect(chatLog(["sessions"], { env: { AI_CHAT_LOGS_DB: oldPath } }).code).toBe(2);
+  });
+
+  test("the help explains --tools for search and [tool]", () => {
+    const help = chatLog(["search", "--help"]).out;
+    ["--tools", "[tool]"].forEach((s) => expect(help).toContain(s));
   });
 });

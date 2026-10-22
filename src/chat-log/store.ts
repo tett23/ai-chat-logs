@@ -4,7 +4,8 @@ import { existsSync } from "node:fs";
 import { type Block, toBlocks } from "./blocks.ts";
 import { makeSnippet, type SearchPlan } from "./search.ts";
 
-export const REQUIRED_SCHEMA_VERSION = 3;
+// docs/adr/0021: record_tool_texts.
+export const REQUIRED_SCHEMA_VERSION = 5;
 
 // Errors that end chat-log with exit code 2 (usage, database, settings), and with 1 (no such session).
 export type ExitError = Error & { exitCode: 1 | 2 };
@@ -122,8 +123,8 @@ export type Hit = {
   role: string | null;
   title: string | null;
   snippet: string;
-  /** docs/adr/0013: which kinds of blocks contain a term. */
-  matched_in: ("text" | "thinking")[];
+  /** docs/adr/0013: which kinds of blocks contain a term; docs/adr/0021: ["tool"] for a match only in tools. */
+  matched_in: ("text" | "thinking" | "tool")[];
 };
 
 const lower = (s: string): string => s.toLowerCase();
@@ -167,22 +168,29 @@ const indexesOf = (db: Database, rows: readonly { provider: string; session_id: 
   );
 };
 
-export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number, offset: number): Hit[] => {
+// docs/adr/0021: with `tools`, a record matches when its text or its tool text contains every term;
+// a record matching in both counts as a match in its text.
+export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number, offset: number, tools = false): Hit[] => {
   if (plan.terms.length === 0) return [];
   const [filterClauses, filterParams] = conditions(f, "s.provider", "ss.cwd", "r.timestamp");
-  const clauses = [
-    ...(plan.fts !== null ? ["record_texts MATCH ?"] : []),
-    ...plan.likes.map(() => "record_texts.text LIKE ? ESCAPE '\\'"),
-    "NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid)",
-    ...filterClauses,
+  const branch = (table: string, tool: number): [string, SQLQueryBindings[]] => [
+    `SELECT rowid AS rid, text, ${tool} AS tool FROM ${table} WHERE ${[
+      ...(plan.fts !== null ? [`${table} MATCH ?`] : []),
+      ...plan.likes.map(() => "text LIKE ? ESCAPE '\\'"),
+    ].join(" AND ")}`,
+    [...(plan.fts !== null ? [plan.fts] : []), ...plan.likes],
   ];
-  const params: SQLQueryBindings[] = [...(plan.fts !== null ? [plan.fts] : []), ...plan.likes, ...filterParams, limit, offset];
-  type Row = { provider: string; session_id: string | null; uuid: string | null; timestamp: string | null; role: string | null; title: string | null; snip: string; rid: number; raw: string };
+  const branches = [branch("record_texts", 0), ...(tools ? [branch("record_tool_texts", 1)] : [])];
+  const clauses = ["NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid)", ...filterClauses];
+  const params: SQLQueryBindings[] = [...branches.flatMap(([, p]) => p), ...filterParams, limit, offset];
+  type Row = { provider: string; session_id: string | null; uuid: string | null; timestamp: string | null; role: string | null; title: string | null; snip: string; tool: number; rid: number; raw: string };
   const rows = db
     .query<Row, SQLQueryBindings[]>(
-      `SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role' AS role, ss.title, record_texts.text AS snip, r.rowid AS rid, r.raw
-       FROM record_texts
-       JOIN records r ON r.rowid = record_texts.rowid
+      `WITH matched AS (${branches.map(([sql]) => sql).join(" UNION ALL ")}),
+            best AS (SELECT rid, text, min(tool) AS tool FROM matched GROUP BY rid)
+       SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role' AS role, ss.title, best.text AS snip, best.tool, r.rowid AS rid, r.raw
+       FROM best
+       JOIN records r ON r.rowid = best.rid
        JOIN sources s ON s.id = r.source_id
        LEFT JOIN session_summaries ss ON ss.provider = s.provider AND ss.session_id = r.session_id
        WHERE ${clauses.join(" AND ")}
@@ -199,6 +207,6 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
     role: row.role,
     title: row.title,
     snippet: makeSnippet(row.snip, plan.terms, SNIPPET_CONTEXT),
-    matched_in: matchedIn(row.raw, plan.terms),
+    matched_in: row.tool === 1 ? ["tool"] : matchedIn(row.raw, plan.terms),
   }));
 };

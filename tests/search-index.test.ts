@@ -5,7 +5,8 @@ import { join } from "node:path";
 import initial from "../schema/0001-initial.sql" with { type: "text" };
 import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { type: "text" };
 import otherProviders from "../schema/0003-other-providers.sql" with { type: "text" };
-import { openDatabase } from "../src/db.ts";
+import sessionMessageIndexes from "../schema/0004-session-message-indexes.sql" with { type: "text" };
+import { openDatabase, SCHEMA_VERSION } from "../src/db.ts";
 import { importSources, type SourceEntry } from "../src/import.ts";
 import { jsonl, tempDir, writeFile } from "./helpers.ts";
 
@@ -256,7 +257,7 @@ describe("indexes for numbering session messages", () => {
     old.run("PRAGMA user_version = 3");
     old.close();
     const db = openDatabase(dbPath);
-    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(4);
+    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(SCHEMA_VERSION);
     expect(indexes(db)).toEqual(["records_session", "records_session_order", "records_uuid_session"]);
   });
 
@@ -294,5 +295,55 @@ describe("indexes for numbering session messages", () => {
       expect.stringContaining("COVERING INDEX records_session_order"),
       expect.stringContaining("COVERING INDEX records_uuid_session"),
     ]);
+  });
+});
+
+// docs/adr/0021
+describe("tool texts", () => {
+  const toolTexts = (db: Database) =>
+    db.query<{ text: string }, []>("SELECT text FROM record_tool_texts ORDER BY rowid").all().map((r) => r.text);
+  const toolUse = assistant("s", [
+    { type: "text", text: "編集します" },
+    { type: "tool_use", id: "t1", name: "Edit", input: { file_path: "docs/x.md", new_string: "編集の中身" } },
+  ]);
+  const stringResult = user("s", [{ type: "tool_result", tool_use_id: "t1", content: "結果の文字列" }]);
+  const arrayResult = user("s", [
+    { type: "tool_result", tool_use_id: "t2", content: [{ type: "text", text: "配列の文字" }, { type: "image", source: { type: "base64", data: "QUJDREVG" } }] },
+  ]);
+
+  test("migrating from version 4 builds record_tool_texts from existing records", () => {
+    const dir = tempDir();
+    const dbPath = join(dir, "v4.sqlite");
+    const old = new Database(dbPath);
+    [initial, searchAndSummaries, otherProviders, sessionMessageIndexes].forEach((sql) => old.run(sql));
+    old.run("PRAGMA user_version = 4");
+    old.query("INSERT INTO sources (id, kind, path, first_seen_at, last_seen_at) VALUES (1, 'claude-code/transcript', '/x.jsonl', 'n', 'n')").run();
+    old
+      .query("INSERT INTO records (source_id, line_no, raw, imported_at, type, uuid, session_id, timestamp) VALUES (1, 1, ?, 'n', 'assistant', 'a', 's', 't')")
+      .run(JSON.stringify(toolUse));
+    old.close();
+    const db = openDatabase(dbPath);
+    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(5);
+    expect(toolTexts(db)).toEqual([`Edit ${JSON.stringify(toolUse.message.content[1]?.input)}`]);
+  });
+
+  test("tool inputs, string results and the text parts of array results, without images or plain messages", () => {
+    const { dir, db } = setup();
+    const path = writeFile(join(dir, "s.jsonl"), jsonl(user("s", "ツールの無い本文"), toolUse, stringResult, arrayResult));
+    importSources(db, [transcript(path)], {});
+    const found = toolTexts(db);
+    expect(found).toHaveLength(3);
+    expect(found[0]).toContain("編集の中身");
+    expect(found.slice(1)).toEqual(["結果の文字列", "配列の文字"]);
+    expect(found.join("\n")).not.toContain("QUJDREVG");
+  });
+
+  test("an import adds the tool texts of the new lines", () => {
+    const { dir, db } = setup();
+    const path = writeFile(join(dir, "s.jsonl"), jsonl(toolUse));
+    importSources(db, [transcript(path)], {});
+    appendFileSync(path, jsonl(stringResult));
+    importSources(db, [transcript(path)], {});
+    expect(toolTexts(db)).toHaveLength(2);
   });
 });

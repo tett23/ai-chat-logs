@@ -179,6 +179,7 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 ```sh
 bun src/cli/chat-log.ts context                     # いまのプロジェクトの最近のセッションと最後のやりとり
 bun src/cli/chat-log.ts search 写し --cwd .          # 全文検索（結果に <セッションID>#<番号> が出る）
+bun src/cli/chat-log.ts search 'uuid のみ' --tools --cwd .   # ツールの入出力（ファイルの編集など）も探す
 bun src/cli/chat-log.ts show f0f40b1f --around 563   # その前後の10件を読む
 bun src/cli/chat-log.ts search pm2 --since 2026-10-01 --until 2026-10-08   # 期間で絞る
 ```

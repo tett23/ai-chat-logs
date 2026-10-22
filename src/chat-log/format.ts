@@ -8,9 +8,11 @@ const flat = (text: string): string => text.replace(/\s*\n\s*/g, " ");
 export const sessionLine = (s: Session): string =>
   [s.last_at ?? "", s.provider, short(s.session_id), String(s.message_count), s.title ? flat(s.title) : "", s.cwd ?? ""].join("\t");
 
-// docs/adr/0013: a hit only in thinking is marked so that the reader knows to look at the thinking.
+// docs/adr/0013: a hit only in thinking is marked so that the reader knows to look at the thinking;
+// docs/adr/0021: likewise a hit only in tools.
 export const hitLines = (h: Hit): string => {
-  const mark = h.matched_in.length === 1 && h.matched_in[0] === "thinking" ? "[thinking] " : "";
+  const only = h.matched_in.length === 1 ? h.matched_in[0] : undefined;
+  const mark = only === "thinking" || only === "tool" ? `[${only}] ` : "";
   return `${h.timestamp ?? ""}\t${h.provider}\t${short(h.session_id)}#${h.index ?? "?"}\t${h.role ?? ""}\t${h.title ? flat(h.title) : ""}\n\t${mark}${flat(h.snippet)}`;
 };
 
