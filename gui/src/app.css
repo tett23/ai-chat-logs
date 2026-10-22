@@ -1,1 +1,8 @@
 @import "tailwindcss";
+
+/* docs/adr/0024: blocks of the kinds unchecked in the 表示 menu, except in the highlighted message */
+.hide-thinking article:not([data-highlight]) [data-block-kind="thinking"],
+.hide-tool_use article:not([data-highlight]) [data-block-kind="tool_use"],
+.hide-tool_result article:not([data-highlight]) [data-block-kind="tool_result"] {
+  display: none;
+}
