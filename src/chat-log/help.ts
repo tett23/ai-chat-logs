@@ -71,7 +71,8 @@ const SHOW = `chat-log show <セッションID> [オプション]
   （続けて省いたものは「#<最初>〜#<最後>」で1行）。理由は「思考だけ。--thinking で出す」か「表示する本文が無い」。
   --limit は番号の範囲で数える（省いたメッセージも数える）。
   続きがあるときは最後に「（続き：#<次の番号> から。--offset <数> で出す）」の行。--around のときも、その --offset で続きを出せる。
-  --around で1件目より後から始まったときは、先頭に「（前：#1〜#<数> は --offset 0 で出す）」の行。
+  --around で1件目より後から始まったときは、先頭に「（前：#<最初>〜#<数> は --offset <数> で出す）」の行。
+  前の行は、範囲の直前の同じ件数の範囲を指す。--around で --limit 1 のときは、前と続きの行を出さない。
   --json: index、uuid、timestamp、role、model、is_sidechain、blocks（kind と text、name、input、type、truncated_from）`;
 
 export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW };

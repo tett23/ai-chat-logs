@@ -314,13 +314,14 @@ describe("chat-log output corrections (docs/adr/0013)", () => {
 
   test("the previous and next lines with --around", () => {
     const out = chatLog(["show", BIG, "--around", "50", "--limit", "4", "--max-chars", "5"]).out;
-    expect(out.split("\n")[0]).toBe("（前：#1〜#47 は --offset 0 で出す）");
+    // docs/adr/0023: the page right before the range
+    expect(out.split("\n")[0]).toBe("（前：#44〜#47 は --offset 43 で出す）");
     expect(out.trimEnd().endsWith("（続き：#52 から。--offset 51 で出す）")).toBe(true);
   });
 
   test("the help explains --cwd ., --around and the continuation lines", () => {
     const help = chatLog(["--help"]).out;
-    ["--cwd .", "--limit 1", "（続き：#", "（前：#1〜#", "[thinking]", "⟪"].forEach((s) => expect(help).toContain(s));
+    ["--cwd .", "--limit 1", "（続き：#", "（前：#", "[thinking]", "⟪"].forEach((s) => expect(help).toContain(s));
   });
 });
 
@@ -422,5 +423,31 @@ describe("chat-log marks omitted messages", () => {
   test("--json is unchanged and the help explains the line", () => {
     expect(json(chatLog(["show", EMPTY, "--json"]).out)).toHaveLength(5);
     expect(chatLog(["show", "--help"]).out).toContain("（#<番号> は省いた：<理由>）");
+  });
+});
+
+// docs/adr/0023
+describe("chat-log --around navigation lines", () => {
+  const heads = (out: string) => lines(out).filter((l) => l.startsWith("## #")).map((l) => l.split(" ")[1]);
+
+  test("the previous line points to the page right before the range, and works as given", () => {
+    const out = chatLog(["show", BIG, "--around", "50", "--max-chars", "5"]).out;
+    expect(out.split("\n")[0]).toBe("（前：#35〜#44 は --offset 34 で出す）");
+    expect(heads(chatLog(["show", BIG, "--offset", "34", "--limit", "10", "--max-chars", "5"]).out)).toEqual(
+      ["#35", "#36", "#37", "#38", "#39", "#40", "#41", "#42", "#43", "#44"],
+    );
+    expect(chatLog(["show", BIG, "--around", "8", "--max-chars", "5"]).out.split("\n")[0]).toBe("（前：#1〜#2 は --offset 0 で出す）");
+  });
+
+  test("--around with --limit 1 prints no navigation lines; show without --around keeps its next line", () => {
+    const one = chatLog(["show", BIG, "--around", "50", "--limit", "1", "--max-chars", "5"]).out;
+    expect(one).not.toContain("（前：");
+    expect(one).not.toContain("（続き：");
+    expect(chatLog(["show", BIG, "--limit", "2", "--max-chars", "5"]).out.trimEnd().endsWith("（続き：#3 から。--offset 2 で出す）")).toBe(true);
+  });
+
+  test("the help explains the previous line and --limit 1", () => {
+    const help = chatLog(["show", "--help"]).out;
+    ["直前の同じ件数の範囲", "--limit 1 のときは、前と続きの行を出さない"].forEach((s) => expect(help).toContain(s));
   });
 });
