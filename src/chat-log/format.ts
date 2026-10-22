@@ -49,8 +49,13 @@ const itemText = (it: PageItem): string =>
 export const messagesText = (messages: readonly Message[], o: RenderOptions, page: Page): string => {
   const options = page.center !== null ? { ...o, thinking: true } : o;
   const shown = pageItems(messages, options).map(itemText);
-  const before = page.previous && page.from > 1 ? [`（前：#1〜#${page.from - 1} は --offset 0 で出す）`] : [];
-  const after = page.to < page.total ? [`（続き：#${page.to + 1} から。--offset ${page.to} で出す）`] : [];
+  // docs/adr/0023: the previous line points to the page of the same size right before the range,
+  // and a single message read with --around has no navigation lines.
+  const size = page.to - page.from + 1;
+  const single = page.center !== null && size === 1;
+  const first = Math.max(1, page.from - size);
+  const before = page.previous && page.from > 1 && !single ? [`（前：#${first}〜#${page.from - 1} は --offset ${first - 1} で出す）`] : [];
+  const after = page.to < page.total && !single ? [`（続き：#${page.to + 1} から。--offset ${page.to} で出す）`] : [];
   const parts = [...before, ...shown, ...after];
   return parts.length === 0 ? "" : `${parts.join("\n\n")}\n`;
 };

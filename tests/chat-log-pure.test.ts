@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderBlock, replaceBase64, toBlocks, truncate } from "../src/chat-log/blocks.ts";
-import { pageItems } from "../src/chat-log/format.ts";
+import { messagesText, pageItems } from "../src/chat-log/format.ts";
 import { makeSnippet, planSearch } from "../src/chat-log/search.ts";
 import type { Message } from "../src/chat-log/store.ts";
 import { matchSession, parseTime } from "../src/chat-log/values.ts";
@@ -185,5 +185,16 @@ describe("pageItems", () => {
   test("a run with hidden thinking that has a body says so", () => {
     expect(kinds(pageItems([text(1), empty(2), thought(3), text(4)], o))).toEqual(["#1", "2-3:thinking", "#4"]);
     expect(kinds(pageItems([text(1), empty(2), thought(3), text(4)], { ...o, thinking: true }))).toEqual(["#1", "2-2:empty", "#3", "#4"]);
+  });
+});
+
+// docs/adr/0023
+describe("navigation lines", () => {
+  const o = { thinking: false, tools: false, maxChars: 2000 };
+  const head = (from: number, to: number) => messagesText([], o, { from, to, total: 120, center: from, previous: true }).split("\n")[0];
+  test("the previous line points to the page of the same size right before the range", () => {
+    expect(head(50, 59)).toBe("（前：#40〜#49 は --offset 39 で出す）");
+    expect(head(6, 15)).toBe("（前：#1〜#5 は --offset 0 で出す）");
+    expect(head(1, 10)).toBe("（続き：#11 から。--offset 10 で出す）");
   });
 });
