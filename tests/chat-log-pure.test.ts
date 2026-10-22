@@ -31,6 +31,8 @@ describe("planSearch", () => {
       fts: '"全文検索" AND "abc"',
       likes: ["%が%"],
       terms: ["全文検索", "が", "abc"],
+      notFts: null,
+      notLikes: [],
     });
   });
 
@@ -40,7 +42,7 @@ describe("planSearch", () => {
   });
 
   test("an empty input has no terms", () => {
-    expect(planSearch("   ")).toEqual({ fts: null, likes: [], terms: [] });
+    expect(planSearch("   ")).toEqual({ fts: null, likes: [], terms: [], notFts: null, notLikes: [] });
   });
 });
 
@@ -196,5 +198,17 @@ describe("navigation lines", () => {
     expect(head(50, 59)).toBe("（前：#40〜#49 は --offset 39 で出す）");
     expect(head(6, 15)).toBe("（前：#1〜#5 は --offset 0 で出す）");
     expect(head(1, 10)).toBe("（続き：#11 から。--offset 10 で出す）");
+  });
+});
+
+// docs/adr/0022
+describe("planSearch with excluded terms", () => {
+  test("long excluded terms become one FTS5 query, short ones NOT LIKE patterns", () => {
+    expect(planSearch("写し", ["写して", "ab", "写しても"])).toMatchObject({ notFts: '"写して" OR "写しても"', notLikes: ["%ab%"] });
+    expect(planSearch("写し")).toMatchObject({ notFts: null, notLikes: [] });
+  });
+
+  test("FTS5 syntax and LIKE wildcards in excluded terms stay literal", () => {
+    expect(planSearch("x", ['a"b*c', "%_"])).toMatchObject({ notFts: '"a""b*c"', notLikes: ["%\\%\\_%"] });
   });
 });
