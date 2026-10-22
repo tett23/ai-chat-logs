@@ -406,3 +406,21 @@ describe("chat-log thinking around a hit", () => {
     ["その範囲のメッセージの思考も", "本文が空の思考"].forEach((s) => expect(help).toContain(s));
   });
 });
+
+// docs/adr/0020
+describe("chat-log marks omitted messages", () => {
+  test("show prints a line with the numbers and the reason where it leaves messages out", () => {
+    const out = chatLog(["show", EMPTY]).out;
+    expect(out).toContain("（#2 は省いた：表示する本文が無い）");
+    expect(out).toContain("（#4 は省いた：思考だけ。--thinking で出す）");
+    const thinking = chatLog(["show", EMPTY, "--thinking"]).out;
+    expect(thinking).toContain("（#2 は省いた：表示する本文が無い）");
+    expect(thinking).not.toContain("#4 は省いた");
+    expect(chatLog(["show", EMPTY, "--around", "3"]).out).not.toContain("#4 は省いた");
+  });
+
+  test("--json is unchanged and the help explains the line", () => {
+    expect(json(chatLog(["show", EMPTY, "--json"]).out)).toHaveLength(5);
+    expect(chatLog(["show", "--help"]).out).toContain("（#<番号> は省いた：<理由>）");
+  });
+});

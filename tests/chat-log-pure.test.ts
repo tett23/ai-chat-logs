@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { renderBlock, replaceBase64, toBlocks, truncate } from "../src/chat-log/blocks.ts";
+import { pageItems } from "../src/chat-log/format.ts";
 import { makeSnippet, planSearch } from "../src/chat-log/search.ts";
+import type { Message } from "../src/chat-log/store.ts";
 import { matchSession, parseTime } from "../src/chat-log/values.ts";
 
 // docs/adr/0011
@@ -156,5 +158,32 @@ describe("matchSession", () => {
     expect(matchSession("abcdef12", ids)).toEqual({ kind: "ambiguous", ids: ["abcdef12-0000", "abcdef12-1111"] });
     expect(matchSession("ffffffff", ids)).toEqual({ kind: "none" });
     expect(matchSession("1234567", ids)).toEqual({ kind: "short" });
+  });
+});
+
+// docs/adr/0020
+describe("pageItems", () => {
+  const msg = (index: number, blocks: Message["blocks"]): Message => ({ index, uuid: null, timestamp: null, role: "assistant", model: null, is_sidechain: false, blocks });
+  const text = (i: number) => msg(i, [{ kind: "text", text: `本文${i}` }]);
+  const empty = (i: number) => msg(i, [{ kind: "thinking", text: "" }]);
+  const thought = (i: number) => msg(i, [{ kind: "thinking", text: "考え" }]);
+  const o = { thinking: false, tools: false, maxChars: 2000 };
+  const kinds = (items: ReturnType<typeof pageItems>) =>
+    items.map((it) => (it.kind === "message" ? `#${it.index}` : `${it.from}-${it.to}:${it.reason}`));
+
+  test("one line per run of omitted messages, at the start, middle and end", () => {
+    expect(kinds(pageItems([empty(1), text(2), empty(3), empty(4), text(5), empty(6)], o))).toEqual([
+      "1-1:empty",
+      "#2",
+      "3-4:empty",
+      "#5",
+      "6-6:empty",
+    ]);
+    expect(kinds(pageItems([text(1), text(2)], o))).toEqual(["#1", "#2"]);
+  });
+
+  test("a run with hidden thinking that has a body says so", () => {
+    expect(kinds(pageItems([text(1), empty(2), thought(3), text(4)], o))).toEqual(["#1", "2-3:thinking", "#4"]);
+    expect(kinds(pageItems([text(1), empty(2), thought(3), text(4)], { ...o, thinking: true }))).toEqual(["#1", "2-2:empty", "#3", "#4"]);
   });
 });

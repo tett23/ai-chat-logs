@@ -22,13 +22,33 @@ export const messageText = (m: Message, o: RenderOptions): string | null => {
 
 export type Page = { from: number; to: number; total: number; center: number | null; previous: boolean };
 
+// docs/adr/0020: a run of messages with nothing shown becomes one item, saying whether --thinking
+// would show something.
+export type PageItem = { kind: "message"; index: number; text: string } | { kind: "omitted"; from: number; to: number; reason: "thinking" | "empty" };
+
+const hiddenThinking = (m: Message, o: RenderOptions): boolean => !o.thinking && m.blocks.some((b) => b.kind === "thinking" && b.text.trim() !== "");
+
+export const pageItems = (messages: readonly Message[], o: RenderOptions): PageItem[] =>
+  messages.reduce<PageItem[]>((acc, m) => {
+    const text = messageText(m, o);
+    if (text !== null) return [...acc, { kind: "message", index: m.index, text }];
+    const reason = hiddenThinking(m, o) ? "thinking" : "empty";
+    const last = acc[acc.length - 1];
+    return last?.kind === "omitted" && last.to === m.index - 1
+      ? [...acc.slice(0, -1), { ...last, to: m.index, reason: last.reason === "thinking" ? "thinking" : reason }]
+      : [...acc, { kind: "omitted", from: m.index, to: m.index, reason }];
+  }, []);
+
+const REASONS = { thinking: "思考だけ。--thinking で出す", empty: "表示する本文が無い" } as const;
+
+const itemText = (it: PageItem): string =>
+  it.kind === "message" ? it.text : `（${it.from === it.to ? `#${it.from}` : `#${it.from}〜#${it.to}`} は省いた：${REASONS[it.reason]}）`;
+
 // Messages of a page; with show --around every message of the page shows its thinking
 // (docs/adr/0019). Lines tell how to read the messages before and after the page.
 export const messagesText = (messages: readonly Message[], o: RenderOptions, page: Page): string => {
   const options = page.center !== null ? { ...o, thinking: true } : o;
-  const shown = messages
-    .map((m) => messageText(m, options))
-    .filter((t): t is string => t !== null);
+  const shown = pageItems(messages, options).map(itemText);
   const before = page.previous && page.from > 1 ? [`（前：#1〜#${page.from - 1} は --offset 0 で出す）`] : [];
   const after = page.to < page.total ? [`（続き：#${page.to + 1} から。--offset ${page.to} で出す）`] : [];
   const parts = [...before, ...shown, ...after];
