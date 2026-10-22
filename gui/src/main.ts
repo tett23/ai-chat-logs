@@ -7,6 +7,7 @@ import { initialRange, newerRange, newestFirst, olderRange, type Range } from ".
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
 import { splitSnippet } from "./snippet.ts";
+import { ALL_SHOWN, HIDEABLE, messageShown, parseShown, type Shown, serializeShown } from "./visibility.ts";
 
 const PAGE = 50;
 const SEARCH_DELAY_MS = 300;
@@ -102,7 +103,7 @@ const textParts = (text: string): Node[] =>
   );
 
 // docs/adr/0005: the body of a folded part is built when it is first opened.
-const folded = (summary: string, body: () => Node[], tone = "text-gray-500"): Node => {
+const folded = (summary: string, body: () => Node[], tone = "text-gray-500"): HTMLElement => {
   const content = h("div", { class: "mt-1 border-l-2 border-gray-200 pl-2" });
   const details = h("details", { class: "my-1" }, [
     h("summary", { class: `cursor-pointer select-none text-xs ${tone}` }, [summary]),
@@ -169,14 +170,19 @@ const withLoadButton = (block: Exclude<api.Block, { kind: "text" }>, rowid: numb
   return [holder, button];
 };
 
-const blockNode = (block: api.Block, rowid: number, index: number): Node =>
-  block.kind === "text"
-    ? h("div", {}, textParts(block.text))
-    : folded(
-        foldedSummary(block),
-        () => withLoadButton(block, rowid, index),
-        block.kind === "tool_result" && block.is_error ? "text-red-600" : "text-gray-500",
-      );
+// docs/adr/0024: data-block-kind lets the 表示 menu hide the blocks of a kind with CSS (app.css).
+const blockNode = (block: api.Block, rowid: number, index: number): HTMLElement => {
+  const node =
+    block.kind === "text"
+      ? h("div", {}, textParts(block.text))
+      : folded(
+          foldedSummary(block),
+          () => withLoadButton(block, rowid, index),
+          block.kind === "tool_result" && block.is_error ? "text-red-600" : "text-gray-500",
+        );
+  node.dataset.blockKind = block.kind;
+  return node;
+};
 
 const messageNode = (message: api.Message): HTMLElement => {
   const isUser = message.role === "user";
@@ -187,15 +193,65 @@ const messageNode = (message: api.Message): HTMLElement => {
   ]);
   const body = () => message.blocks.map((block, i) => blockNode(block, message.rowid, i));
   const content = message.is_sidechain ? [folded("サブエージェント", () => [header, ...body()])] : [header, ...body()];
-  return h(
+  const article = h(
     "article",
     {
       class: `mb-3 rounded p-2 ${isUser ? "bg-blue-50" : ""}`,
-      attrs: { "data-index": String(message.index), ...(message.uuid ? { "data-uuid": message.uuid } : {}) },
+      attrs: {
+        "data-index": String(message.index),
+        "data-kinds": message.blocks.map((b) => b.kind).join(" "),
+        ...(message.uuid ? { "data-uuid": message.uuid } : {}),
+      },
     },
     content,
   );
+  applyShown(article);
+  return article;
 };
+
+// docs/adr/0024: the 表示 menu. Blocks of an unchecked kind are hidden by a class on the view, and a
+// message left with nothing to show is hidden as a whole; the choice is kept in localStorage.
+const SHOWN_KEY = "ai-chat-logs:shown";
+const readShown = (): Shown => {
+  try {
+    return parseShown(localStorage.getItem(SHOWN_KEY));
+  } catch {
+    return ALL_SHOWN;
+  }
+};
+let shown = readShown();
+function applyShown(article: HTMLElement): void {
+  const kinds = (article.dataset.kinds ?? "").split(" ").filter((k) => k !== "");
+  article.hidden = !messageShown(kinds, shown, article.dataset.highlight === "true");
+}
+const applyShownToView = (): void => {
+  HIDEABLE.forEach((kind) => view.classList.toggle(`hide-${kind}`, !shown[kind]));
+  view.querySelectorAll<HTMLElement>("article[data-kinds]").forEach(applyShown);
+};
+const shownMenu = h(
+  "div",
+  { class: "flex items-center gap-3 text-xs text-gray-500" },
+  [
+    "表示",
+    ...HIDEABLE.map((kind) => {
+      const box = h("input", { attrs: { type: "checkbox" } });
+      box.checked = shown[kind];
+      box.addEventListener("change", () => {
+        shown = { ...shown, [kind]: box.checked };
+        try {
+          localStorage.setItem(SHOWN_KEY, serializeShown(shown));
+        } catch {
+          // the menu still works for this run
+        }
+        applyShownToView();
+        fillView();
+      });
+      return h("label", { class: "flex items-center gap-1" }, [box, kind]);
+    }),
+  ],
+);
+
+applyShownToView();
 
 // docs/adr/0014, docs/adr/0016: a session is loaded a page at a time as the view scrolls, newest first:
 // older messages are added below, newer ones above.
@@ -209,13 +265,19 @@ const conversation = {
   loadingDown: false,
 };
 const pageStatus = (): HTMLElement =>
-  h("p", { class: "py-1 text-xs text-gray-400" }, [
+  h("p", { class: "text-xs text-gray-400" }, [
     conversation.range ? `${conversation.range.from}〜${conversation.range.to} / ${conversation.total}` : "",
     conversation.loadingUp || conversation.loadingDown ? "（読み込み中…）" : "",
   ]);
-const messagesBox = h("div");
-const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90" });
-const refreshStatus = (): void => clear(statusBox, pageStatus());
+// docs/adr/0024: the sticky header is held 16px down inside the padding of the view, so the messages
+// start 16px lower to stay clear of it at the top.
+const messagesBox = h("div", { class: "pt-4" });
+const statusText = h("div");
+const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 flex items-center justify-between gap-4 bg-white/90 py-1" }, [
+  statusText,
+  shownMenu,
+]);
+const refreshStatus = (): void => clear(statusText, pageStatus());
 
 const loadRange = async (range: Range): Promise<api.MessagePage | null> => {
   const generation = conversation.generation;
@@ -323,6 +385,8 @@ const openSession = async (
       const sidechain = found.querySelector("details");
       if (sidechain && found.firstElementChild === sidechain) sidechain.open = true;
       found.classList.add("ring-2", "ring-amber-400");
+      found.dataset.highlight = "true";
+      applyShown(found);
       found.scrollIntoView({ block: "center" });
     } else {
       view.scrollTop = 0;
