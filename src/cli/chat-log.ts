@@ -85,7 +85,7 @@ const main = (argv: string[]): string => {
     }
     case "search": {
       if (rest.length === 0) usage("search には語を指定する");
-      const hits = search(db, planSearch(rest.join(" ")), filter(v.cwd), count(v.limit, "limit", 20), offset);
+      const hits = search(db, planSearch(rest.join(" ")), filter(v.cwd), count(v.limit, "limit", 20), offset, v.tools === true);
       return v.json ? jsonLines(hits) : hits.map((h) => `${hitLines(h)}\n`).join("");
     }
     case "show": {

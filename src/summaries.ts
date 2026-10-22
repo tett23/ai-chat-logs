@@ -10,6 +10,8 @@ export const maxRecordRowid = (db: Database): number =>
 
 export const indexTextsAfter = (db: Database, rowid: number): void => {
   db.query("INSERT INTO record_texts (rowid, text) SELECT record_rowid, text FROM record_text_source WHERE record_rowid > ? AND text <> ''").run(rowid);
+  // docs/adr/0021
+  db.query("INSERT INTO record_tool_texts (rowid, text) SELECT record_rowid, text FROM record_tool_text_source WHERE record_rowid > ? AND text <> ''").run(rowid);
 };
 
 export const sessionsAfter = (db: Database, rowid: number): SessionKey[] =>

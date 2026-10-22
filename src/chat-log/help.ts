@@ -38,16 +38,20 @@ const SESSIONS = `chat-log sessions [オプション]
 const SEARCH = `chat-log search <語...> [オプション]
   本文の全文検索。語はすべて含むもの（AND）。新しい順。写し（下の「用語」）は1回だけ出る。既定: --limit 20
   3文字以上の語は索引で引く。3文字未満の語（日本語の2文字の語など）は全件を走査するので遅い。
-  本文の対象は、メッセージのテキストと思考。ツールの入出力は対象外。
+  本文の対象は、メッセージのテキストと思考。ツールの入出力は、--tools を付けたときだけ探す。
+  --tools               ツールのテキスト（ツールの名前と入力の JSON、文字列の結果、配列の結果の中のテキスト）も探す。
+                        本文とツールのテキストのどちらかが、すべての語を含めば出る（両方にまたがる AND にはしない）。
+                        ファイルの編集やコマンドの中身など、本文に無い内容を探すときに使う
   既定ではプロジェクトに絞らない。いまのプロジェクトだけを探すには --cwd . を付ける。
   出力（1件2行。一致した部分は ⟪ ⟫ で囲む。本文の ** は Markdown の太字で、強調ではない）:
   抜粋は、語ごとに最初に一致した位置の前後32文字。離れた範囲のあいだと、本文を切ったところに … を置く。
     <時刻>	<提供元>	<セッションIDの先頭8文字>#<メッセージの番号>	<役割>	<タイトル>
     	<抜粋>
-  思考（thinking）にだけ一致したときは、抜粋の先頭に [thinking] が付く。
+  思考（thinking）にだけ一致したときは、抜粋の先頭に [thinking] が付く。ツールにだけ一致したときは [tool] が付き、
+  抜粋はツールのテキストから作る（show --around <番号> --tools で全文を読める）。
   <セッションIDの先頭8文字> と <メッセージの番号> は、そのまま show と show --around に渡せる。
   show --around はその範囲のメッセージの思考も出すので、[thinking] の付いた結果もそのまま読める。
-  --json: provider、session_id、index、uuid、timestamp、role、title、snippet、matched_in（["text"]、["thinking"]、["text","thinking"]）`;
+  --json: provider、session_id、index、uuid、timestamp、role、title、snippet、matched_in（["text"]、["thinking"]、["text","thinking"]、["tool"]）`;
 
 const SHOW = `chat-log show <セッションID> [オプション]
   1つのセッションのメッセージを順に出す。セッションIDは、ほかと区別できれば先頭8文字以上でよい。
@@ -84,6 +88,7 @@ AI のエージェントが、過去の経緯や決定を思い出して文脈�
   1. chat-log context                     いまのプロジェクトの最近のセッションを知る
   2. chat-log search <語> --cwd .         決定や議論を探す（結果に <ID>#<番号> が出る。--cwd . でいまのプロジェクトに絞る）
   3. chat-log show <ID> --around <番号>   その前後の会話を読む
+  本文で見つからないときは、search に --tools を付けてツールの入出力も探す
 
 サブコマンド:
 

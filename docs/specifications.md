@@ -69,7 +69,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
-- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は4）。
+- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は5）。
 
 | 表・ビュー | 中身 |
 |---|---|
@@ -81,6 +81,8 @@ ai-chat-logs の現行の仕様をまとめる。
 | `record_texts` | 会話の本文の全文検索（FTS5、`trigram`）。`rowid` は `records.rowid` |
 | `session_summaries` | セッションの要約（提供元、セッションID、`cwd`、タイトル、最初と最後の時刻、メッセージの数） |
 | `record_text_source`（ビュー） | 本文の取り出しの規則 |
+| `record_tool_texts` | ツールのテキストの全文検索（FTS5、`trigram`）。`rowid` は `records.rowid`。`chat-log search --tools` が使う（[ADR 0021](adr/0021-search-tool-inputs-and-results.md)） |
+| `record_tool_text_source`（ビュー） | ツールのテキストの取り出しの規則：`tool_use` は名前と `input` の JSON、`tool_result` は文字列の `content`、配列なら `text` のブロックだけ（画像などは入れない） |
 | `copied_records`（ビュー） | 別のファイルに写された、同じ提供元・セッション・`uuid` のレコードのうち、2つ目以降のもの |
 | `session_messages`（ビュー） | セッションのメッセージ（写しを除く。写しの規則は `copied_records` と同じものを、索引で覆えるように直接書く。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)） |
 | `session_summary_source`（ビュー） | 要約の作り方 |
@@ -97,7 +99,7 @@ ai-chat-logs の現行の仕様をまとめる。
 - 写し：同じ提供元・セッションID・`uuid` のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。
 - 要約：メッセージが1つ以上あるセッションだけ。`first_at`・`last_at` はメッセージの時刻の最小と最大、`cwd` は時刻の順で最初のもの。
 - タイトル：最後の `custom-title`（パスと行番号の順）、無ければセッションのファイルの最新の版の `title`（`cliSessionId` で対応。`claude-code` は `claude-desktop/session`、`claude-cowork` は `claude-cowork/session`）、無ければ最初の `isMeta` でない `user` の本文の先頭80文字。
-- 行を取り込むたびに、増えた行の本文を索引に足し、増えた行のセッションの要約を作りなおす。デスクトップアプリのセッションの版が増えたら、その `cliSessionId` のセッションの要約を作りなおす。
+- 行を取り込むたびに、増えた行の本文とツールのテキストを索引に足し、増えた行のセッションの要約を作りなおす。デスクトップアプリのセッションの版が増えたら、その `cliSessionId` のセッションの要約を作りなおす。
 
 ### claude.ai のエクスポートの変換
 
@@ -187,12 +189,12 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ## AI 向けの CLI（chat-log）
 
-[ADR 0011](adr/0011-cli-for-ai-agents.md)、[ADR 0013](adr/0013-chat-log-output-corrections.md)、[ADR 0018](adr/0018-chat-log-snippets-until-and-help.md)、[ADR 0019](adr/0019-chat-log-thinking-around-hits.md)、[ADR 0020](adr/0020-chat-log-mark-omitted-messages.md)、[ADR 0023](adr/0023-chat-log-around-navigation-lines.md)
+[ADR 0011](adr/0011-cli-for-ai-agents.md)、[ADR 0013](adr/0013-chat-log-output-corrections.md)、[ADR 0018](adr/0018-chat-log-snippets-until-and-help.md)、[ADR 0019](adr/0019-chat-log-thinking-around-hits.md)、[ADR 0020](adr/0020-chat-log-mark-omitted-messages.md)、[ADR 0021](adr/0021-search-tool-inputs-and-results.md)、[ADR 0023](adr/0023-chat-log-around-navigation-lines.md)
 
-- `chat-log <context | sessions | search | show>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が3より古ければ終了コード2。
+- `chat-log <context | sessions | search | show>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が5より古ければ終了コード2。
 - 共通のオプション：`--provider`、`--cwd`（そのディレクトリか、その下。既定で絞るのは `context` だけ）、`--all`（`context`）、`--since`・`--until`（ISO 8601 か `7d`・`12h`・`30m`。日付だけは UTC の 0 時、オフセットの無い時刻は手元の時刻帯。`search` はメッセージの時刻、`sessions` と `context` は `--since` を最後の時刻・`--until` を最初の時刻と比べる。`show` には効かない）、`--limit`、`--offset`、`--max-chars`（0 で切らない）、`--json`（JSON Lines）。
 - `sessions`：`<最後の時刻>\t<提供元>\t<IDの先頭8文字>\t<メッセージ数>\t<タイトル>\t<cwd>`。新しい順。既定 50 件。
-- `search <語...>`：GUI と同じ検索の規則（3文字以上は FTS5、3文字未満は `LIKE`、写しは除く）。1件2行（`<時刻>\t<提供元>\t<ID>#<番号>\t<役割>\t<タイトル>`、`\t<抜粋>`）。抜粋は本文から作り、語ごとに最初に一致した位置の前後32文字を切り出して、重なる・隣りあう範囲をまとめ、一致を切らないように広げ、範囲のあいだと切ったところに `…` を置く（どの語も見つからなければ先頭の64文字）。範囲の中のすべての一致を `⟪ ⟫` で囲み、重なる・隣りあう強調は1つにまとめる。思考にだけ一致したときは抜粋の先頭に `[thinking] `。`--json` の `matched_in`。既定 20 件。
+- `search <語...>`：GUI と同じ検索の規則（3文字以上は FTS5、3文字未満は `LIKE`、写しは除く）。1件2行（`<時刻>\t<提供元>\t<ID>#<番号>\t<役割>\t<タイトル>`、`\t<抜粋>`）。抜粋は本文から作り、語ごとに最初に一致した位置の前後32文字を切り出して、重なる・隣りあう範囲をまとめ、一致を切らないように広げ、範囲のあいだと切ったところに `…` を置く（どの語も見つからなければ先頭の64文字）。範囲の中のすべての一致を `⟪ ⟫` で囲み、重なる・隣りあう強調は1つにまとめる。思考にだけ一致したときは抜粋の先頭に `[thinking] `。`--tools` を付けると `record_tool_texts` も探し、本文かツールのテキストのどちらかがすべての語を含むレコードを出す（両方に一致すれば本文の一致とする）。ツールにだけ一致したときは、抜粋をツールのテキストから作り、先頭に `[tool] `。`--json` の `matched_in`（ツールにだけ一致したときは `["tool"]`）。既定 20 件。
 - `show <セッションID>`：先頭8文字以上で一意なら可。番号はセッションの中の通し番号（写しを除き、時刻の順。同じ時刻はパス・`generation`・行番号の順。[ADR 0016](adr/0016-show-conversations-newest-first.md)）。本文はテキストだけ。思考は `--thinking`（本文が空の思考は出さない）、ツールの全文は `--tools`（既定は1行・200文字）。テキストでないブロックは `[<種類>]`、200文字以上の base64 は `[base64 N 文字]`。表示するものが無いメッセージはテキストの出力で省き（番号は詰めない）、続けて省いたものごとに「（#<番号> は省いた：<理由>）」（複数なら「#<最初>〜#<最後>」）の1行を出す。理由は、本文のある思考を `--thinking` が無いために出さなかったものを含めば「思考だけ。--thinking で出す」、そうでなければ「表示する本文が無い」。`--around N` は N を含む `--limit` 件（N の前に半分。`--limit` が無ければ 10 件）、範囲のメッセージの思考も `--thinking` なしで出す。続きは「（続き：#<次> から。--offset <数> で出す）」、`--around` で前があれば「（前：#<a>〜#<範囲の最初 − 1> は --offset <a − 1> で出す）」（`a` は範囲の最初から `--limit` 件前。1 より小さければ 1）。`--around` で `--limit 1` のときは、前と続きの行を出さない。既定 50 件、2000 文字。
 - `context`：既定で実行したディレクトリのセッション 5 件と、それぞれの最後のテキストのメッセージ 4 件（500 文字）。
 - 終了コード：0 成功（0件を含む）、1 セッションが無い・区別できない、2 使い方の誤り・データベースが無い・古い・設定の書式の誤り。
