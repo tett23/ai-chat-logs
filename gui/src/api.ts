@@ -7,7 +7,7 @@ export type StoreError =
   | { kind: "sqlite"; message: string }
   | { kind: "settings"; message: string };
 
-export type Status = { path: string | null; error: StoreError | null };
+export type Status = { path: string | null; size: number | null; error: StoreError | null };
 
 export type SessionSummary = {
   provider: string;

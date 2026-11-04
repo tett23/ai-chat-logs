@@ -162,14 +162,20 @@ fn with_db<T>(
 #[derive(Serialize)]
 struct Status {
     path: Option<String>,
+    /// docs/adr/0025: bytes on disk, None without the database file.
+    size: Option<u64>,
     error: Option<StoreError>,
 }
 
 #[tauri::command]
 fn status(state: tauri::State<'_, AppState>) -> CommandResult<Status> {
     with_loaded(&state, |l| {
+        let path = settings::value(&l.settings, settings::DB).map(str::to_owned);
         Ok(Status {
-            path: settings::value(&l.settings, settings::DB).map(str::to_owned),
+            size: path
+                .as_deref()
+                .and_then(|p| setup::database_size(Path::new(p))),
+            path,
             error: l.db.as_ref().err().cloned(),
         })
     })

@@ -148,6 +148,18 @@ pub fn check_paths(settings: &[Setting]) -> Vec<PathCheck> {
         .collect()
 }
 
+/// docs/adr/0025: the bytes the database takes on disk, its main file with the -wal and -shm files of
+/// WAL mode; None without the main file.
+pub fn database_size(path: &Path) -> Option<u64> {
+    let size = |p: &Path| std::fs::metadata(p).ok().map(|m| m.len());
+    let main = size(path)?;
+    let side = ["-wal", "-shm"]
+        .iter()
+        .filter_map(|suffix| size(&PathBuf::from(format!("{}{suffix}", path.display()))))
+        .sum::<u64>();
+    Some(main + side)
+}
+
 fn database_stats(path: &Path) -> rusqlite::Result<DatabaseCheck> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -244,6 +256,19 @@ mod tests {
             setting(settings::REPO, "/repo"),
             setting(settings::BUN, "/tools/bin/bun"),
         ]
+    }
+
+    // docs/adr/0025
+    #[test]
+    fn database_size_adds_the_wal_and_shm_files() {
+        let path = crate::store::scratch_path("size");
+        assert_eq!(database_size(&path), None);
+        std::fs::write(&path, vec![0u8; 4096]).unwrap();
+        assert_eq!(database_size(&path), Some(4096));
+        let with = |suffix: &str| PathBuf::from(format!("{}{suffix}", path.display()));
+        std::fs::write(with("-wal"), vec![0u8; 100]).unwrap();
+        std::fs::write(with("-shm"), vec![0u8; 32]).unwrap();
+        assert_eq!(database_size(&path), Some(4228));
     }
 
     #[test]

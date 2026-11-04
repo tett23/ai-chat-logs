@@ -6,6 +6,7 @@ import { splitFences } from "./fences.ts";
 import { initialRange, newerRange, newestFirst, olderRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
+import { formatSize } from "./size.ts";
 import { splitSnippet } from "./snippet.ts";
 import { ALL_SHOWN, HIDEABLE, messageShown, parseShown, type Shown, serializeShown } from "./visibility.ts";
 
@@ -557,7 +558,8 @@ const start = async (): Promise<void> => {
   notice.textContent = "";
   await loadProjects();
   showInbox();
-  clear(view, h("p", { class: "text-gray-500" }, [`データベース: ${s.path ?? ""}`]));
+  // docs/adr/0025
+  clear(view, h("p", { class: "text-gray-500" }, [`データベース: ${s.path ?? ""}${s.size === null ? "" : `（${formatSize(s.size)}）`}`]));
   resetList();
 };
 
