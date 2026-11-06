@@ -286,7 +286,7 @@ const pageStatus = (): HTMLElement =>
 const messagesBox = h("div", { class: "pt-4" });
 const statusText = h("div");
 // docs/adr/0026: the whole session as Markdown, written by chat-log export.
-const exportStatus = h("span", { class: "text-xs text-gray-500" });
+const exportStatus = h("p", { class: "whitespace-pre-wrap break-all text-xs text-gray-500 empty:hidden" });
 const exportButton = h(
   "button",
   { class: "rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-50", attrs: { disabled: "" } },
@@ -310,9 +310,12 @@ exportButton.addEventListener("click", () => {
     }
   })();
 });
-const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 flex items-center justify-between gap-4 bg-white/90 py-1" }, [
-  statusText,
-  h("div", { class: "flex items-center gap-3" }, [h("span", { class: "whitespace-pre-wrap" }, [exportStatus]), exportButton, shownMenu]),
+const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90 py-1" }, [
+  h("div", { class: "flex items-center justify-between gap-4 whitespace-nowrap" }, [
+    statusText,
+    h("div", { class: "flex items-center gap-3" }, [exportButton, shownMenu]),
+  ]),
+  exportStatus,
 ]);
 const refreshStatus = (): void => clear(statusText, pageStatus());
 
