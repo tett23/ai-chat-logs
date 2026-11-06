@@ -81,7 +81,20 @@ const SHOW = `chat-log show <セッションID> [オプション]
   前の行は、範囲の直前の同じ件数の範囲を指す。--around で --limit 1 のときは、前と続きの行を出さない。
   --json: index、uuid、timestamp、role、model、is_sidechain、blocks（kind と text、name、input、type、truncated_from）`;
 
-export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW };
+// docs/adr/0026
+const EXPORT = `chat-log export <セッションID>
+  1つのセッションの全文を Markdown で標準出力に書く（ファイルに残すときは > <ファイル> で受ける）。
+  写しを除いたすべてのメッセージを番号の順に書く。本文、思考、ツールの入出力を切らずに書く
+  （200文字以上の base64 だけは [base64 <文字数> 文字] にする）。本文が空の思考と、書くものが無いメッセージは書かない。
+  思考とツールは <details> で折りたたむ。人が読むためのもので、AI が読むには show を使う。
+  --provider、--cwd、--since、--until、--limit、--offset、--max-chars、--json は付けられない。
+  出力:
+    # <タイトル>
+    - セッション、提供元、cwd、期間、メッセージの件数
+    ## #<番号> <役割> <時刻> [<モデル>] [(サブエージェント)]
+    <本文>`;
+
+export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, export: EXPORT };
 
 export const MAIN_HELP = `chat-log: Claude の会話の履歴（Claude Code、Cowork、claude.ai）を引く、読み取り専用の CLI。
 AI のエージェントが、過去の経緯や決定を思い出して文脈を戻すために使う。
@@ -101,6 +114,8 @@ ${SESSIONS}
 ${SEARCH}
 
 ${SHOW}
+
+${EXPORT}
 
 ${COMMON}
 

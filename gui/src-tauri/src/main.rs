@@ -437,6 +437,65 @@ fn exclusive<T>(
     reloaded.and(result)
 }
 
+/// docs/adr/0026: runs `chat-log export` with its stdout going to a temporary file next to
+/// `dest`, which replaces `dest` on success and is removed on failure.
+fn export_to(
+    spec: &setup::CommandSpec,
+    cwd: Option<&str>,
+    dest: &Path,
+) -> Result<RunResult, StoreError> {
+    let fail = |e: std::io::Error| settings_error(format!("{}: {e}", dest.display()));
+    let name = dest
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let temp = dest.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let file = std::fs::File::create(&temp).map_err(fail)?;
+    let mut command = std::process::Command::new(&spec.program);
+    command
+        .args(&spec.args)
+        .envs(spec.env.iter().cloned())
+        .stdout(file);
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    let output = command.output().map_err(|e| {
+        let _ = std::fs::remove_file(&temp);
+        settings_error(format!("{}: {e}", spec.program.display()))
+    })?;
+    if output.status.success() {
+        std::fs::rename(&temp, dest).map_err(fail)?;
+        Ok(RunResult {
+            exit_code: output.status.code(),
+            output: dest.display().to_string(),
+        })
+    } else {
+        let _ = std::fs::remove_file(&temp);
+        Ok(RunResult {
+            exit_code: output.status.code(),
+            output: setup::tail(&String::from_utf8_lossy(&output.stderr), 20),
+        })
+    }
+}
+
+#[tauri::command(async)]
+fn export_session(
+    state: tauri::State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> CommandResult<RunResult> {
+    let env_path = std::env::var("PATH").ok();
+    // Copy the settings so that the lock is not held while the export runs.
+    let settings = with_loaded(&state, |l| Ok(l.settings.clone()))?;
+    let spec = setup::export_command(&settings, env_path.as_deref(), &session_id)
+        .map_err(settings_error)?;
+    export_to(
+        &spec,
+        settings::value(&settings, settings::REPO),
+        Path::new(&path),
+    )
+}
+
 #[tauri::command(async)]
 fn run_sync(state: tauri::State<'_, AppState>) -> CommandResult<RunResult> {
     let path = std::env::var("PATH").ok();
@@ -525,7 +584,8 @@ fn main() {
             check_environment,
             run_sync,
             import_claude_ai_export,
-            scan_claude_ai_exports
+            scan_claude_ai_exports,
+            export_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running the application");

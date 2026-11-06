@@ -534,3 +534,30 @@ describe("chat-log search --exclude", () => {
     ["--exclude <語>", "chat-log search 写し --exclude 写して --exclude 写す"].forEach((s) => expect(help).toContain(s));
   });
 });
+
+// docs/adr/0026
+describe("chat-log export", () => {
+  test("writes every message of a session as Markdown, without copies and without cutting", () => {
+    const r = chatLog(["export", BIG]);
+    expect(r.code).toBe(0);
+    const heads = lines(r.out).filter((l) => l.startsWith("## #"));
+    expect(heads).toHaveLength(120);
+    expect(heads[0]).toBe("## #1 user 2026-09-01T00:00:00.000Z");
+    expect(r.out).toContain("長".repeat(100_000));
+    const s1 = chatLog(["export", "aaaaaaaa"]).out;
+    expect(s1.split("\n")[0]).toBe("# 設計の議論");
+    expect(lines(s1).filter((l) => l.startsWith("## #"))).toHaveLength(4);
+  });
+
+  test("exit codes", () => {
+    expect(chatLog(["export", "99999999"]).code).toBe(1);
+    expect(chatLog(["export"]).code).toBe(2);
+    expect(chatLog(["export", BIG, "--limit", "5"]).code).toBe(2);
+    expect(chatLog(["export", BIG, "--json"]).code).toBe(2);
+  });
+
+  test("the help explains export", () => {
+    expect(chatLog(["--help"]).out).toContain("chat-log export <セッションID>");
+    expect(chatLog(["export", "--help"]).code).toBe(0);
+  });
+});

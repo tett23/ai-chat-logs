@@ -66,6 +66,28 @@ pub fn scan_command(settings: &[Setting], path: Option<&str>) -> Result<CommandS
     })
 }
 
+/// docs/adr/0026: `chat-log export <session>` with the same environment as sync_command.
+pub fn export_command(
+    settings: &[Setting],
+    path: Option<&str>,
+    session_id: &str,
+) -> Result<CommandSpec, String> {
+    let bun = required(settings, settings::BUN, "bun")?;
+    let repo = required(settings, settings::REPO, "the repository")?;
+    Ok(CommandSpec {
+        program: PathBuf::from(bun),
+        args: vec![
+            Path::new(repo)
+                .join("src/cli/chat-log.ts")
+                .to_string_lossy()
+                .into_owned(),
+            "export".to_owned(),
+            session_id.to_owned(),
+        ],
+        env: command_env(settings, Path::new(bun), path),
+    })
+}
+
 /// The export directories `claude-ai-export-scan` printed, one per line.
 pub fn scanned_exports(stdout: &str) -> Vec<String> {
     stdout
@@ -310,6 +332,26 @@ mod tests {
             ]
         );
         assert_eq!(spec.env[0], ("PATH".to_string(), "/tools/bin".to_string()));
+    }
+
+    // docs/adr/0026
+    #[test]
+    fn builds_the_export_command() {
+        let spec = export_command(&sample(), Some("/usr/bin"), "aaaaaaaa-1111").unwrap();
+        assert_eq!(spec.program, PathBuf::from("/tools/bin/bun"));
+        assert_eq!(
+            spec.args,
+            vec!["/repo/src/cli/chat-log.ts", "export", "aaaaaaaa-1111"]
+        );
+        assert_eq!(
+            spec.env,
+            sync_command(&sample(), Some("/usr/bin")).unwrap().env
+        );
+        let no_bun: Vec<_> = sample()
+            .into_iter()
+            .filter(|s| s.key != settings::BUN)
+            .collect();
+        assert!(export_command(&no_bun, None, "x").is_err());
     }
 
     #[test]
