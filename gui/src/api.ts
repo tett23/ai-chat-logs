@@ -97,6 +97,8 @@ export const saveSetting = (key: string, value: string | null) => invoke<Setting
 export const checkEnvironment = () => invoke<EnvironmentCheck>("check_environment");
 export const runSync = () => invoke<RunResult>("run_sync");
 export const importClaudeAiExport = (zip: string) => invoke<RunResult>("import_claude_ai_export", { zip });
+// docs/adr/0026: output is the destination on success, the tail of stderr otherwise.
+export const exportSession = (sessionId: string, path: string) => invoke<RunResult>("export_session", { sessionId, path });
 
 // docs/adr/0010
 export type { ScanResult } from "./scan.ts";

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { contextText, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
 import { HELP, MAIN_HELP } from "../chat-log/help.ts";
+import { sessionMarkdown } from "../chat-log/markdown.ts";
 import { planSearch } from "../chat-log/search.ts";
 import {
   exitError,
@@ -15,6 +16,7 @@ import {
   search,
   sessionIds,
   sessionMessages,
+  sessionSummary,
 } from "../chat-log/store.ts";
 import { matchSession, parseTime } from "../chat-log/values.ts";
 import { loadEnvFile } from "../env.ts";
@@ -58,6 +60,8 @@ const count = (value: string | undefined, name: string, fallback: number): numbe
   return Number(value);
 };
 
+const EXPORT_REJECTS = ["provider", "cwd", "since", "until", "limit", "offset", "max-chars", "json"] as const;
+
 const main = (argv: string[]): string => {
   const { values: v, positionals } = parse(argv);
   const [command, ...rest] = positionals;
@@ -78,6 +82,14 @@ const main = (argv: string[]): string => {
   const filter = (cwd: string | undefined): Filter => ({ provider: v.provider, cwd: cwd === undefined ? undefined : resolve(cwd), since, until });
   const db = openReadOnly(defaultDatabasePath(process.env));
   const offset = count(v.offset, "offset", 0);
+  // A session ID or a unique prefix of it.
+  const sessionOf = (prefix: string): string => {
+    const match = matchSession(prefix, sessionIds(db, prefix));
+    if (match.kind === "short") usage("セッションIDは先頭8文字以上で指定する");
+    if (match.kind === "none") throw exitError(1, `セッションが見つかりません: ${prefix}`);
+    if (match.kind === "ambiguous") throw exitError(1, `セッションIDが区別できません: ${prefix}\n候補:\n${match.ids.join("\n")}`);
+    return match.kind === "found" ? match.id : "";
+  };
 
   switch (command) {
     case "sessions": {
@@ -90,12 +102,7 @@ const main = (argv: string[]): string => {
       return v.json ? jsonLines(hits) : hits.map((h) => `${hitLines(h)}\n`).join("");
     }
     case "show": {
-      const prefix = rest[0] ?? usage("show にはセッションIDを指定する");
-      const match = matchSession(prefix, sessionIds(db, prefix));
-      if (match.kind === "short") usage("セッションIDは先頭8文字以上で指定する");
-      if (match.kind === "none") throw exitError(1, `セッションが見つかりません: ${prefix}`);
-      if (match.kind === "ambiguous") throw exitError(1, `セッションIDが区別できません: ${prefix}\n候補:\n${match.ids.join("\n")}`);
-      const id = match.kind === "found" ? match.id : "";
+      const id = sessionOf(rest[0] ?? usage("show にはセッションIDを指定する"));
       // docs/adr/0018: --around reads a few messages around a hit unless --limit says otherwise.
       const limit = count(v.limit, "limit", v.around !== undefined ? 10 : 50);
       const maxChars = count(v["max-chars"], "max-chars", 2000);
@@ -106,6 +113,15 @@ const main = (argv: string[]): string => {
       if (v.json) return jsonLines(messages.map((m) => messageJson(m, maxChars)));
       const center = v.around !== undefined ? count(v.around, "around", 1) : null;
       return messagesText(messages, { thinking: v.thinking, tools: v.tools, maxChars }, { from, to, total, center, previous: center !== null });
+    }
+    // docs/adr/0026: the whole session as Markdown.
+    case "export": {
+      const id = sessionOf(rest[0] ?? usage("export にはセッションIDを指定する"));
+      const rejected = EXPORT_REJECTS.filter((name) => v[name] !== undefined && v[name] !== false);
+      if (rejected.length > 0) usage(`export には ${rejected.map((n) => `--${n}`).join("、")} を付けられない`);
+      const session = sessionSummary(db, id);
+      if (session === null) throw exitError(1, `セッションが見つかりません: ${id}`);
+      return sessionMarkdown(session, sessionMessages(db, id, 1, messageCount(db, id)));
     }
     case "context": {
       const cwd = v.all ? undefined : (v.cwd ?? process.cwd());

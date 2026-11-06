@@ -181,6 +181,7 @@ bun src/cli/chat-log.ts context                     # いまのプロジェク�
 bun src/cli/chat-log.ts search 写し --cwd .          # 全文検索（結果に <セッションID>#<番号> が出る）
 bun src/cli/chat-log.ts search 'uuid のみ' --tools --cwd .   # ツールの入出力（ファイルの編集など）も探す
 bun src/cli/chat-log.ts search 写し --exclude 写して --cwd .   # 語を除く
+bun src/cli/chat-log.ts export f0f40b1f > session.md   # セッションの全文を Markdown で書き出す
 bun src/cli/chat-log.ts show f0f40b1f --around 563   # その前後の10件を読む
 bun src/cli/chat-log.ts search pm2 --since 2026-10-01 --until 2026-10-08   # 期間で絞る
 ```
@@ -212,6 +213,7 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 - 左にセッションの一覧、上に検索の入力欄、右に会話を出す。会話を開く前の右の欄には、データベースのパスと、ディスクで使っている容量（`-wal` と `-shm` を含む）が出る（[ADR 0025](docs/adr/0025-gui-show-database-size.md)）。プロジェクトの絞り込みで、Claude Code のプロジェクトのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 - 会話は新しい順に出す（いちばん上が最後のメッセージ。[ADR 0016](docs/adr/0016-show-conversations-newest-first.md)）。100件ずつ読みこみ、下へスクロールすると古いほうを、検索の結果から途中を開いたときは上へスクロールすると新しいほうを読みこむ（[ADR 0014](docs/adr/0014-load-conversations-in-pages.md)）。会話の上に、読みこんだ範囲と総数が出る。番号は時刻の順に付く（`chat-log` と同じ）。
+- 会話の上の「書き出す」で、開いているセッションの全文を Markdown のファイルに書き出せる（中身は `chat-log export` と同じ）。検索の結果から開いた会話では、本文の中の検索の語句が強調される（[ADR 0026](docs/adr/0026-export-sessions-and-highlight-terms.md)）。
 - 会話の上の「表示」のメニューで、thinking、tool_use、tool_result の行を隠せる。何も出なくなったメッセージは見出しごと隠れる。選んだ状態は次に起動したときも残る（[ADR 0024](docs/adr/0024-gui-conversation-header-and-block-filter.md)）。
 
 ## 開発

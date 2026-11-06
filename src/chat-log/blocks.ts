@@ -4,7 +4,7 @@ export type Block =
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool_use"; name: string; input: string }
-  | { kind: "tool_result"; text: string }
+  | { kind: "tool_result"; text: string; error?: true }
   | { kind: "other"; type: string };
 
 type Json = Record<string, unknown>;
@@ -35,7 +35,8 @@ const toBlock = (item: unknown): Block => {
     case "tool_use":
       return { kind: "tool_use", name: str(item.name), input: JSON.stringify(item.input ?? {}) };
     case "tool_result":
-      return { kind: "tool_result", text: toolResultText(item.content) };
+      // docs/adr/0026: export marks failed tool results
+      return { kind: "tool_result", text: toolResultText(item.content), ...(item.is_error === true ? { error: true as const } : {}) };
     default:
       return { kind: "other", type: typeof item.type === "string" ? item.type : "unknown" };
   }

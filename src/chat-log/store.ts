@@ -62,6 +62,14 @@ export const listSessions = (db: Database, f: Filter, limit: number, offset: num
     .all(...params, limit, offset);
 };
 
+// docs/adr/0026: the summary of one session, for the head of an export.
+export const sessionSummary = (db: Database, sessionId: string): Session | null =>
+  db
+    .query<Session, [string]>(
+      "SELECT provider, session_id, title, cwd, first_at, last_at, message_count FROM session_summaries WHERE session_id = ? ORDER BY provider LIMIT 1",
+    )
+    .get(sessionId);
+
 export const sessionIds = (db: Database, prefix: string): string[] =>
   db
     .query<{ id: string }, [string]>("SELECT DISTINCT session_id id FROM session_summaries WHERE session_id LIKE ? ESCAPE '\\'")

@@ -1,8 +1,11 @@
 // docs/adr/0003: session list, search, and conversation view. docs/adr/0007: the settings and setup screen.
+import { save } from "@tauri-apps/plugin-dialog";
 import { renderAdmin } from "./admin.ts";
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
+import { exportFileName } from "./export.ts";
 import { splitFences } from "./fences.ts";
+import { highlightParts, searchTerms } from "./highlight.ts";
 import { initialRange, newerRange, newestFirst, olderRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
@@ -96,11 +99,18 @@ const showError = (e: unknown): void => {
 };
 
 // Conversation view
+// docs/adr/0026: the search terms of the hit the conversation was opened from, marked in text and thinking.
+let highlightTerms: readonly string[] = [];
+const marked = (text: string): Node[] =>
+  highlightParts(text, highlightTerms).map((part) =>
+    part.hit ? h("mark", { class: "rounded-sm bg-yellow-200" }, [part.text]) : document.createTextNode(part.text),
+  );
+
 const textParts = (text: string): Node[] =>
   splitFences(text).map((part) =>
     part.kind === "code"
-      ? h("pre", { class: "my-1 overflow-x-auto rounded bg-gray-100 p-2 font-mono text-xs" }, [h("code", {}, [part.text])])
-      : h("div", { class: "whitespace-pre-wrap break-words" }, [part.text]),
+      ? h("pre", { class: "my-1 overflow-x-auto rounded bg-gray-100 p-2 font-mono text-xs" }, [h("code", {}, marked(part.text))])
+      : h("div", { class: "whitespace-pre-wrap break-words" }, marked(part.text)),
   );
 
 // docs/adr/0005: the body of a folded part is built when it is first opened.
@@ -259,6 +269,7 @@ applyShownToView();
 const NEAR_EDGE_PX = 600;
 const conversation = {
   sessionId: null as string | null,
+  title: null as string | null,
   generation: 0, // bumps when another session is opened, so stale pages are dropped
   range: null as Range | null,
   total: 0,
@@ -274,9 +285,34 @@ const pageStatus = (): HTMLElement =>
 // start 16px lower to stay clear of it at the top.
 const messagesBox = h("div", { class: "pt-4" });
 const statusText = h("div");
+// docs/adr/0026: the whole session as Markdown, written by chat-log export.
+const exportStatus = h("span", { class: "text-xs text-gray-500" });
+const exportButton = h(
+  "button",
+  { class: "rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-50", attrs: { disabled: "" } },
+  ["書き出す"],
+);
+exportButton.addEventListener("click", () => {
+  const sessionId = conversation.sessionId;
+  if (!sessionId) return;
+  void (async () => {
+    const path = await save({ defaultPath: exportFileName(conversation.title, sessionId), filters: [{ name: "Markdown", extensions: ["md"] }] });
+    if (path === null) return;
+    exportButton.disabled = true;
+    exportStatus.textContent = "書き出し中…";
+    try {
+      const result = await api.exportSession(sessionId, path);
+      exportStatus.textContent = result.exit_code === 0 ? `書き出しました: ${path}` : `失敗しました（終了コード ${result.exit_code ?? "なし"}）\n${result.output}`;
+    } catch (e) {
+      exportStatus.textContent = String(typeof e === "object" && e !== null && "kind" in e ? errorText(e as api.StoreError) : e);
+    } finally {
+      exportButton.disabled = conversation.sessionId === null;
+    }
+  })();
+});
 const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 flex items-center justify-between gap-4 bg-white/90 py-1" }, [
   statusText,
-  shownMenu,
+  h("div", { class: "flex items-center gap-3" }, [h("span", { class: "whitespace-pre-wrap" }, [exportStatus]), exportButton, shownMenu]),
 ]);
 const refreshStatus = (): void => clear(statusText, pageStatus());
 
@@ -345,13 +381,19 @@ view.addEventListener("scroll", () => {
 // `knownTotal` is the message count of the session list (docs/adr/0016); a search hit gives `target`.
 const openSession = async (
   sessionId: string,
+  title: string | null,
   target: number | null,
   uuid: string | null,
   knownTotal: number | null,
+  terms: readonly string[],
 ): Promise<void> => {
   state.selected = sessionId;
   conversation.generation += 1;
   conversation.sessionId = sessionId;
+  conversation.title = title;
+  highlightTerms = terms;
+  exportButton.disabled = false;
+  exportStatus.textContent = "";
   conversation.range = null;
   conversation.total = 0;
   conversation.loadingUp = false;
@@ -403,7 +445,7 @@ const providerBadge = (provider: string): Node | null =>
   provider === "claude-code" ? null : h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
 
 const sessionItem = (s: api.SessionSummary): Node =>
-  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, null, null, s.message_count) } }, [
+  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, s.title, null, null, s.message_count, []) } }, [
     h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
     h("div", { class: "flex justify-between text-xs text-gray-500" }, [
       h("span", {}, [formatTime(s.last_at)]),
@@ -421,7 +463,8 @@ const snippetNode = (snippet: string): Node =>
 const hitItem = (hit: api.SearchHit): Node =>
   h(
     "li",
-    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id && openSession(hit.session_id, hit.index, hit.uuid, null) } },
+    { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id &&
+          openSession(hit.session_id, hit.title, hit.index, hit.uuid, null, state.mode.kind === "search" ? searchTerms(state.mode.query) : []) } },
     [
       h("div", { class: "truncate text-xs font-medium" }, [providerBadge(hit.provider), hit.title ?? hit.session_id ?? ""]),
       h("div", { class: "text-xs text-gray-500" }, [`${hit.role ?? ""} ${formatTime(hit.timestamp)}`]),
