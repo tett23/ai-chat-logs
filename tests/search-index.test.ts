@@ -323,7 +323,7 @@ describe("tool texts", () => {
       .run(JSON.stringify(toolUse));
     old.close();
     const db = openDatabase(dbPath);
-    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(5);
+    expect(db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v).toBe(SCHEMA_VERSION);
     expect(toolTexts(db)).toEqual([`Edit ${JSON.stringify(toolUse.message.content[1]?.input)}`]);
   });
 

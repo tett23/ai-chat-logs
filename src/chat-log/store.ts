@@ -2,10 +2,11 @@
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { existsSync } from "node:fs";
 import { type Block, toBlocks } from "./blocks.ts";
+import { restoredRaw } from "../payloads.ts";
 import { makeSnippet, type SearchPlan } from "./search.ts";
 
-// docs/adr/0021: record_tool_texts.
-export const REQUIRED_SCHEMA_VERSION = 5;
+// docs/adr/0021: record_tool_texts; docs/adr/0031: payloads.
+export const REQUIRED_SCHEMA_VERSION = 6;
 
 // Errors that end chat-log with exit code 2 (usage, database, settings), and with 1 (no such session).
 export type ExitError = Error & { exitCode: 1 | 2 };
@@ -110,17 +111,20 @@ export const messageCount = (db: Database, sessionId: string): number =>
   db.query<{ n: number }, [string]>("SELECT count(*) n FROM session_messages WHERE session_id = ?").get(sessionId)?.n ?? 0;
 
 // Messages numbered from 1 in file and line order without copies, in [from, to].
-export const sessionMessages = (db: Database, sessionId: string, from: number, to: number): Message[] =>
-  db
-    .query<{ idx: number; uuid: string | null; timestamp: string | null; raw: string }, [string, number, number]>(
-      `SELECT x.idx, r.uuid, r.timestamp, r.raw
+// docs/adr/0031: raw is restored from payloads before it is read.
+export const sessionMessages = (db: Database, sessionId: string, from: number, to: number): Message[] => {
+  const restore = restoredRaw(db);
+  return db
+    .query<{ idx: number; uuid: string | null; timestamp: string | null; raw: string; payload_state: number | null }, [string, number, number]>(
+      `SELECT x.idx, r.uuid, r.timestamp, r.raw, r.payload_state
        FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
              FROM session_messages WHERE session_id = ?) x
        JOIN records r ON r.rowid = x.record_rowid
        WHERE x.idx BETWEEN ? AND ? ORDER BY x.idx`,
     )
     .all(sessionId, from, to)
-    .map(toMessage);
+    .map((row) => toMessage({ ...row, raw: restore(row.raw, row.payload_state) }));
+};
 
 export type Hit = {
   provider: string;
@@ -138,6 +142,7 @@ export type Hit = {
 const lower = (s: string): string => s.toLowerCase();
 
 // The kinds of blocks of a record that contain any of the terms (case-insensitively, like LIKE).
+// Text and thinking are never taken out into payloads (docs/adr/0031), so raw needs no restoring here.
 const matchedIn = (raw: string, terms: readonly string[]): ("text" | "thinking")[] => {
   const content = (() => {
     try {

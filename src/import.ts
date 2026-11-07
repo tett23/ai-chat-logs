@@ -4,6 +4,7 @@ import { detectChange } from "./change.ts";
 import { extractFields } from "./extract.ts";
 import { isFileKind, isLineKind, type LineKind } from "./kinds.ts";
 import { splitCompleteLines } from "./lines.ts";
+import { takePayloadsAfter } from "./payloads.ts";
 import { indexTextsAfter, maxRecordRowid, rebuildSessions, sessionsAfter, sessionsOfFile } from "./summaries.ts";
 
 export type SourceEntry = { kind: string; path: string };
@@ -127,6 +128,8 @@ const importLines = (db: Database, kind: LineKind, path: string, now: string, ch
       if (totals.added > 0) {
         indexTextsAfter(db, rowidBefore);
         rebuildSessions(db, sessionsAfter(db, rowidBefore));
+        // docs/adr/0031: after the texts and summaries are built from the whole lines
+        takePayloadsAfter(db, rowidBefore);
       }
       return totals.added;
     })

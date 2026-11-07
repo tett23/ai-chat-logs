@@ -3,6 +3,7 @@
 
 mod blocks;
 mod dotenv;
+mod payloads;
 mod query;
 mod settings;
 mod setup;
