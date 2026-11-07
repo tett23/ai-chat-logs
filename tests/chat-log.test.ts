@@ -580,7 +580,7 @@ describe("chat-log with a closed output pipe", () => {
   test.each([
     ["export", BIG],
     ["show", BIG, "--max-chars", "0", "--limit", "120"],
-    ["search", "長長長", "--limit", "120"],
+    ["search", "全文検索"],
   ])("%s ends with 0 and nothing on stderr", (...args) => {
     expect(throughHead(args)).toEqual({ code: 0, err: "" });
   });
