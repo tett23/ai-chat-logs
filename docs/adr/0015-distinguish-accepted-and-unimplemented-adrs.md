@@ -16,7 +16,7 @@ adr-guard v0.8.3（[ADR 0012](0012-update-adr-guard-to-v0-8-3.md) で導入）�
 利用者の運用では、採択して実装を待つ ADR を `採択（未実装）` とし、未実装の ADR をまとめて実装する手順（エージェントに、`採択（未実装）` の ADR を探して実装させ、実装の PR でステータスを `採択` にさせる）をとっている。
 adr-guard は道具としてこの区別を持つが、このリポジトリでいつどの値を使うかを決めた ADR は無い。
 
-また、[ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献は、adr-guard のリポジトリの ADR 0015 を、リンクの無い「tett23/adr-guard ADR 0015」という文字で書いている。
+また、[ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献は、adr-guard のリポジトリの ADR 0015 を、リンクの無い「[tett23/adr-guard ADR 0015](https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md)」という文字で書いている。
 adr-guard のリンクの検査（`adr-guard links`）は、文書の中の `ADR 0015` の形の参照に、このリポジトリの ADR 0015 へのリンクを求める。
 このリポジトリに ADR 0015 を足すと、[ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献の行が、リンクの無い参照として CI の `adr` ジョブで失敗する。
 
@@ -51,7 +51,7 @@ adr-guard のリンクの検査（`adr-guard links`）は、文書の中の `ADR
 
 ### [ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献のリンク
 
-[ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献の「tett23/adr-guard ADR 0015「…」：<URL>」の「tett23/adr-guard ADR 0015「…」」の部分を、`[tett23/adr-guard ADR 0015「…」](<URL>)` のリンクで囲む。見える文字（後ろの「：<URL>」を含む）は変えない。
+[ADR 0009](0009-update-adr-guard-to-v0-8-2.md) の参考文献の「[tett23/adr-guard ADR 0015「…」](https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md)：<URL>」の「[tett23/adr-guard ADR 0015「…」](https://github.com/tett23/adr-guard/blob/main/docs/adr/0015-allow-link-changes.md)」の部分を、`[tett23/adr-guard ADR 0015「…」](<URL>)` のリンクで囲む。見える文字（後ろの「：<URL>」を含む）は変えない。
 リンクの文字の中の `ADR 0015` は、adr-guard のリンクの検査の対象外になる。
 コミット済みの ADR の、リンクだけの変更であり、adr-guard v0.8.2 からの `--allow-links` で許可される。
 この修正は、この ADR を入れる PR に含める（この ADR だけを入れると、CI のリンクの検査が [ADR 0009](0009-update-adr-guard-to-v0-8-2.md) で失敗するため）。
