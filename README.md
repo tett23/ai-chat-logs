@@ -36,7 +36,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 
 1. claude.ai の設定 → Privacy → Export data でエクスポートを要求する。
 2. 届いたメールのリンクから zip をダウンロードする（ダウンロードフォルダに置く）。
-3. あとは次の取り込み（pm2 の毎時の定期実行か `bin/sync`）で、自動で変換されてデータベースに入る（[ADR 0010](docs/adr/0010-scan-downloads-for-claude-ai-exports.md)）。すぐに取り込みたいときは、GUI の閲覧の画面の「ダウンロードしたエクスポートを取り込む」を押す。
+3. あとは次の取り込み（pm2 の定期実行（既定では4時間ごと）か `bin/sync`）で、自動で変換されてデータベースに入る（[ADR 0010](docs/adr/0010-scan-downloads-for-claude-ai-exports.md)）。すぐに取り込みたいときは、GUI の閲覧の画面の「ダウンロードしたエクスポートを取り込む」を押す。
 
 - 受け取り用のディレクトリは `AI_CHAT_LOGS_CLAUDE_AI_INBOX`（既定は `~/Downloads`）で変えられる。直下の zip のうち、中に `conversations.json` があるものをエクスポートとみなす。名前は問わない。
 - 取り込み済みかどうかは中身で見分けるので、zip を残しておいても二重には入らない。zip は消さない。
@@ -128,7 +128,8 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 - `pm2 startup` は、launchd（macOS）や systemd（Linux）に登録するためのコマンドを表示する。表示されたコマンドを、内容を確かめてから実行する（`sudo` が要る）。
 - `pm2 save` は、その時点で登録されているアプリを保存し、起動時に復元させる。`pm2 start` や `pm2 delete` で登録を変えたら、`pm2 save` をやりなおす。
 - 再起動の後に `pm2 status ai-chat-logs-sync` でアプリがあること、データベースの `runs` 表に新しい行が入っていることを確かめるとよい。
-- 登録した時点で1回実行され、以後は毎時0分に実行される。間隔は `AI_CHAT_LOGS_CRON`（cron の式。環境変数か `.env`）で変えられる。
+- 登録した時点で1回実行され、以後は4時間ごと（0、4、8、12、16、20時）の0分に実行される（[ADR 0029](docs/adr/0029-sync-every-four-hours-by-default.md)）。間隔は `AI_CHAT_LOGS_CRON`（cron の式。環境変数か `.env`）で変えられる。
+- 間隔の既定や `AI_CHAT_LOGS_CRON` を変えたときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。登録したときの値が使われ続ける。
 - `pm2 start` を実行したシェルの `PATH` を引き継ぎ、`pm2 save` で保存される。`bun` が見つからないと、`bin/sync` は終了コード127で終わる。
 - 状態は `pm2 status ai-chat-logs-sync`、ログは `pm2 logs ai-chat-logs-sync` で見る。
 - 止めるときは `pm2 delete ai-chat-logs-sync` の後に `pm2 save` を実行する（しないと、次の起動時に復元される）。
@@ -142,7 +143,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `CLAUDE_CONFIG_DIR` | Claude Code の設定ディレクトリ | `~/.claude` |
 | `AI_CHAT_LOGS_CLAUDE_AI_INBOX` | claude.ai のエクスポートの受け取り用のディレクトリ | `~/Downloads` |
 | `AI_CHAT_LOGS_CLAUDE_AI_DIR` | claude.ai のエクスポートの保存用のディレクトリ | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/claude-ai` |
-| `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 * * * *` |
+| `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 */4 * * *` |
 | `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR` | デスクトップアプリのディレクトリ | `~/Library/Application Support/Claude` |
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
 | `AI_CHAT_LOGS_CONFIG` | 読む設定ファイルのパス | `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env` |

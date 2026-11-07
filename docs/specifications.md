@@ -143,7 +143,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0002](adr/0002-periodic-sync-with-pm2.md)
 
-- `ecosystem.config.cjs` に、pm2 のアプリ `ai-chat-logs-sync` を1つ定義する。`bin/sync` を `/bin/sh` で実行し、`autorestart: false`、`cron_restart` は `AI_CHAT_LOGS_CRON`（`.env` から読んだものを含む。既定は `0 * * * *`）。
+- `ecosystem.config.cjs` に、pm2 のアプリ `ai-chat-logs-sync` を1つ定義する。`bin/sync` を `/bin/sh` で実行し、`autorestart: false`、`cron_restart` は `AI_CHAT_LOGS_CRON`（`.env` から読んだものを含む。既定は `0 */4 * * *`。[ADR 0029](adr/0029-sync-every-four-hours-by-default.md)）。
 - `pm2 start` の時点の `PATH` をアプリに渡す。
 - `bin/sync` は、`bun` が `PATH` に無ければ終了コード127で終わる。
 
