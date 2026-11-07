@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "../src/db.ts";
 import { importSources, type SourceEntry } from "../src/import.ts";
@@ -559,5 +560,28 @@ describe("chat-log export", () => {
   test("the help explains export", () => {
     expect(chatLog(["--help"]).out).toContain("chat-log export <セッションID>");
     expect(chatLog(["export", "--help"]).code).toBe(0);
+  });
+});
+
+// docs/adr/0027
+describe("chat-log with a closed output pipe", () => {
+  // chat-log's stdout goes to `head -c 1`, which closes the pipe after one byte; its exit code and
+  // stderr are kept in files.
+  const throughHead = (args: string[]) => {
+    const tmp = tempDir();
+    const err = join(tmp, "err");
+    const code = join(tmp, "code");
+    Bun.spawnSync(["/bin/sh", "-c", '{ "$@" 2>"$ERR"; echo $? >"$CODE"; } | head -c 1 >/dev/null', "sh", join(repoRoot, "src/cli/chat-log.ts"), ...args], {
+      env: isolatedEnv({ HOME: dir, AI_CHAT_LOGS_DB: dbPath, ERR: err, CODE: code }),
+    });
+    return { code: Number(readFileSync(code, "utf8").trim()), err: readFileSync(err, "utf8") };
+  };
+
+  test.each([
+    ["export", BIG],
+    ["show", BIG, "--max-chars", "0", "--limit", "120"],
+    ["search", "長長長", "--limit", "120"],
+  ])("%s ends with 0 and nothing on stderr", (...args) => {
+    expect(throughHead(args)).toEqual({ code: 0, err: "" });
   });
 });
