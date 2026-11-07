@@ -204,6 +204,8 @@ bun run tauri dev          # 開発用に起動する
 bun run tauri build        # アプリをビルドする（src-tauri/target/release/bundle/macos/AI Chat Logs.app）
 ```
 
+- アイコンの元は `gui/app-icon.svg`。変えたら `gui/` で `bun run tauri icon app-icon.svg` を実行し、`src-tauri/icons/` のうち、もとからあるファイル（`32x32.png`、`128x128.png`、`128x128@2x.png`、`icon.icns`、`icon.ico`、`icon.png`）だけをコミットする。ほかに作られたファイル（iOS、Android、Windows のストア向け）は消す（[ADR 0030](docs/adr/0030-gui-app-icon.md)）。
+
 - 必要なもの：Rust（stable）と、Tauri の前提のライブラリ（macOS では Xcode の Command Line Tools）。
 - 設定は CLI と同じく、環境変数、`.env`、設定ファイル、既定の順に決まる。Finder から起動したアプリには環境変数が渡らないため、既定以外の場所は管理画面で設定ファイルに書く。
 - 「管理」の画面で次ができる（[ADR 0007](docs/adr/0007-settings-and-setup-screen.md)）。データベースが開けないときは、起動時にこの画面が開く。
