@@ -1,4 +1,4 @@
-// docs/adr/0002: run bin/sync on a cron schedule with pm2.
+// docs/adr/0002: run bin/sync on a cron schedule with pm2 (every four hours by default, docs/adr/0029).
 // docs/adr/0004, docs/adr/0007: AI_CHAT_LOGS_CRON may come from the env file or the config file;
 // the CLIs read both themselves.
 const { join } = require("node:path");
@@ -16,7 +16,7 @@ module.exports = {
       script: "bin/sync",
       interpreter: "/bin/sh",
       cwd: __dirname,
-      cron_restart: process.env.AI_CHAT_LOGS_CRON ?? "0 * * * *",
+      cron_restart: process.env.AI_CHAT_LOGS_CRON ?? "0 */4 * * *",
       autorestart: false,
       env: {
         PATH: process.env.PATH,

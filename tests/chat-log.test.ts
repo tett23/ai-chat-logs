@@ -286,6 +286,13 @@ describe("chat-log errors and help", () => {
     expect(chatLog(["show", "--help"]).out).toContain("--around");
   });
 
+  test("--help says the database is updated every four hours by default", () => {
+    const help = chatLog(["--help"]).out;
+    expect(help).toContain("既定では4時間ごとの取り込みで更新される");
+    expect(help).toContain("最新の4時間ぶんが無いことがある");
+    expect(help).not.toContain("毎時");
+  });
+
   test("the default output of a session with huge messages stays bounded", () => {
     const out = chatLog(["show", BIG]).out;
     expect(out.length).toBeLessThan(50 * 2100 + 2000);

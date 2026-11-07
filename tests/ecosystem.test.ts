@@ -9,10 +9,10 @@ const load = (env: Record<string, string | undefined>) => {
 };
 
 describe("ecosystem.config.cjs", () => {
-  test("defines one hourly app running bin/sync without autorestart", () => {
+  test("defines one app every four hours running bin/sync without autorestart", () => {
     const { apps } = load({});
     expect(apps).toHaveLength(1);
-    expect(apps[0]).toMatchObject({ name: "ai-chat-logs-sync", script: "bin/sync", autorestart: false, cron_restart: "0 * * * *", cwd: repoRoot });
+    expect(apps[0]).toMatchObject({ name: "ai-chat-logs-sync", script: "bin/sync", autorestart: false, cron_restart: "0 */4 * * *", cwd: repoRoot });
     expect(apps[0].env.PATH).toBe(process.env.PATH);
   });
 
