@@ -1,6 +1,6 @@
 {
   "name": "ai-chat-logs",
-  "version": "1.0.0-rc1",
+  "version": "1.0.0-rc2",
   "description": "Export AI chat logs (currently Claude) into SQLite and keep them synced",
   "license": "MIT",
   "private": true,

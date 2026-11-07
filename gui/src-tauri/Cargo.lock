@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "ai-chat-logs-gui"
-version = "1.0.0-rc1"
+version = "1.0.0-rc2"
 dependencies = [
  "rusqlite",
  "serde",
