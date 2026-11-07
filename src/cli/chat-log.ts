@@ -141,10 +141,18 @@ const main = (argv: string[]): string => {
   }
 };
 
+// docs/adr/0027: a reader that stops early (`| head`) closes the pipe; end quietly with 0 then.
+const isClosedPipe = (e: unknown): boolean => (e as NodeJS.ErrnoException | null)?.code === "EPIPE";
+process.stdout.on("error", (e) => {
+  if (isClosedPipe(e)) process.exit(0);
+  throw e;
+});
+
 try {
   const argv = process.argv.slice(2);
   process.stdout.write(argv.length === 0 || (argv.length === 1 && (argv[0] === "--help" || argv[0] === "-h")) ? MAIN_HELP : main(argv));
 } catch (e) {
+  if (isClosedPipe(e)) process.exit(0);
   if (isExitError(e)) {
     console.error(e.message);
     process.exit(e.exitCode);
