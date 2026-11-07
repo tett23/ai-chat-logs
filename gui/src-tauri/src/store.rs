@@ -10,8 +10,9 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
-/// The schema version (PRAGMA user_version) whose tables the GUI reads.
-pub const REQUIRED_SCHEMA_VERSION: i64 = 2;
+/// The schema version (PRAGMA user_version) whose tables the GUI reads; 6 for the payloads of
+/// docs/adr/0031, without which records holding markers would show them.
+pub const REQUIRED_SCHEMA_VERSION: i64 = 6;
 
 const SNIPPET_CONTEXT: usize = 32;
 
@@ -202,7 +203,7 @@ pub fn get_messages(
         .unwrap_or(0) as usize;
     let to = from.saturating_add(limit).saturating_sub(1);
     let mut stmt = conn.prepare_cached(
-        "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw
+        "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw, r.payload_state
          FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
                FROM session_messages WHERE session_id = ?1) x
          JOIN records r ON r.rowid = x.record_rowid
@@ -210,7 +211,8 @@ pub fn get_messages(
          ORDER BY x.idx",
     )?;
     let rows = stmt.query_map(params![session_id, from as i64, to as i64], |row| {
-        let raw: String = row.get(4)?;
+        // docs/adr/0031
+        let raw = crate::payloads::restored_raw(conn, row.get(4)?, row.get(5)?)?;
         Ok(to_message(
             row.get(0)?,
             row.get::<_, i64>(1)? as usize,
@@ -264,11 +266,13 @@ fn message_indexes(conn: &Connection, hits: &[(i64, SearchHit)]) -> Result<HashM
 
 /// The whole block at `index` of the record at `rowid` (docs/adr/0005).
 pub fn get_block(conn: &Connection, rowid: i64, index: usize) -> Result<Block> {
-    let raw: String = conn.query_row(
-        "SELECT raw FROM records WHERE rowid = ?1",
+    let (raw, state): (String, Option<i64>) = conn.query_row(
+        "SELECT raw, payload_state FROM records WHERE rowid = ?1",
         params![rowid],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
+    // docs/adr/0031
+    let raw = crate::payloads::restored_raw(conn, raw, state)?;
     let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
     content_blocks(&value)
         .into_iter()
@@ -417,11 +421,13 @@ mod tests {
     use crate::query::plan_search;
     use serde_json::json;
 
-    const SCHEMA: [&str; 4] = [
+    const SCHEMA: [&str; 6] = [
         include_str!("../../../schema/0001-initial.sql"),
         include_str!("../../../schema/0002-search-and-summaries.sql"),
         include_str!("../../../schema/0003-other-providers.sql"),
         include_str!("../../../schema/0004-session-message-indexes.sql"),
+        include_str!("../../../schema/0005-tool-texts.sql"),
+        include_str!("../../../schema/0006-payloads.sql"),
     ];
 
     struct Line {
@@ -462,7 +468,7 @@ mod tests {
         SCHEMA
             .iter()
             .for_each(|sql| conn.execute_batch(sql).unwrap());
-        conn.execute_batch("PRAGMA user_version = 4").unwrap();
+        conn.execute_batch("PRAGMA user_version = 6").unwrap();
         lines.iter().enumerate().for_each(|(i, l)| {
             conn.execute(
                 "INSERT OR IGNORE INTO sources (kind, path, first_seen_at, last_seen_at)
@@ -557,7 +563,7 @@ mod tests {
             open_read_only(&path).err(),
             Some(StoreError::OldSchema {
                 found: 1,
-                required: 2
+                required: 6
             })
         );
     }
@@ -846,6 +852,97 @@ mod tests {
         assert_eq!(
             list_sessions(&conn, None, None, 0, 1).unwrap()[0].message_count,
             3
+        );
+    }
+
+    /// Takes `literal` out of every record's raw into a zstd payload, as the importer does
+    /// (docs/adr/0031).
+    fn take_out(path: &PathBuf, literal: &str) {
+        let conn = Connection::open(path).unwrap();
+        let hash = "5".repeat(64);
+        conn.execute(
+            "INSERT INTO payloads (sha256, size, encoding, content) VALUES (?1, ?2, 'zstd', ?3)",
+            params![
+                hash,
+                literal.len() as i64,
+                zstd::encode_all(literal.as_bytes(), 3).unwrap()
+            ],
+        )
+        .unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE records SET raw = replace(raw, ?1, ?2), payload_state = 1 WHERE instr(raw, ?1) > 0",
+                params![literal, format!("\"\\u0000ai-chat-logs-payload:{hash}\"")],
+            )
+            .unwrap();
+        assert_eq!(changed, 2);
+        conn.execute(
+            "UPDATE records SET payload_state = 0 WHERE payload_state IS NULL",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn reads_records_whose_payloads_were_taken_out() {
+        let long = format!("長い結果 \"引用\" {}", "x ".repeat(3000));
+        let content =
+            json!([{"type": "text", "text": "短い"}, {"type": "tool_result", "content": long}]);
+        let lines = [
+            line(
+                "/p/s1.jsonl",
+                "s1",
+                "u1",
+                "2026-01-01T00:00:00Z",
+                "user",
+                content.clone(),
+            ),
+            line(
+                "/p/s1.jsonl",
+                "s1",
+                "u2",
+                "2026-01-01T00:01:00Z",
+                "user",
+                content,
+            ),
+        ];
+        let plain = build(&lines);
+        let taken = build(&lines);
+        take_out(&taken, &serde_json::to_string(&long).unwrap());
+        let read = |path: &PathBuf| {
+            let conn = open_read_only(path).unwrap();
+            let page = get_messages(&conn, "s1", 1, 100).unwrap();
+            let blocks = page
+                .messages
+                .iter()
+                .map(|m| get_block(&conn, m.rowid, 1).unwrap())
+                .collect::<Vec<_>>();
+            (
+                page.messages
+                    .into_iter()
+                    .map(|m| m.blocks)
+                    .collect::<Vec<_>>(),
+                blocks,
+            )
+        };
+        let raw_of = |path: &PathBuf| {
+            Connection::open(path)
+                .unwrap()
+                .query_row("SELECT raw FROM records WHERE uuid = 'u1'", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap()
+        };
+        assert!(raw_of(&taken).contains("ai-chat-logs-payload"));
+        assert!(!raw_of(&plain).contains("ai-chat-logs-payload"));
+        assert_eq!(read(&taken), read(&plain));
+        assert_eq!(
+            read(&taken).1[0],
+            Block::ToolResult {
+                text: long,
+                is_error: false,
+                full_length: None
+            }
         );
     }
 

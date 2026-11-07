@@ -6,9 +6,10 @@ import searchAndSummaries from "../schema/0002-search-and-summaries.sql" with { 
 import otherProviders from "../schema/0003-other-providers.sql" with { type: "text" };
 import sessionMessageIndexes from "../schema/0004-session-message-indexes.sql" with { type: "text" };
 import toolTexts from "../schema/0005-tool-texts.sql" with { type: "text" };
+import payloads from "../schema/0006-payloads.sql" with { type: "text" };
 
 // docs/adr/0001: migrations are applied in order; PRAGMA user_version holds the applied count.
-const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders, sessionMessageIndexes, toolTexts];
+const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders, sessionMessageIndexes, toolTexts, payloads];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 

@@ -69,12 +69,13 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`--db`、`AI_CHAT_LOGS_DB`、`${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/logs.sqlite` の順（環境変数は `.env` から読んだものを含む）。
 - 権限 `0600` で作る。`journal_mode=WAL`、`busy_timeout=10000`。
-- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は5）。
+- スキーマは `schema/NNNN-<名前>.sql` を順に当てる。当てた数を `PRAGMA user_version` に持つ（現在は6）。
 
 | 表・ビュー | 中身 |
 |---|---|
 | `sources` | 取り込んだファイル（種類、提供元（種類の `/` より前の生成列）、パス、`generation`、取り込み済みのバイト数と行数、先頭のハッシュ、大きさ、更新時刻、最初と最後に見た時刻、見つからなくなった時刻） |
-| `records` | JSONL の1行（`raw`）と、抽出した `type`、`uuid`、`session_id`、`timestamp` |
+| `records` | JSONL の1行（`raw`）と、抽出した `type`、`uuid`、`session_id`、`timestamp`、`payload_state`（ペイロードの処理の状態。下の「ペイロード」） |
+| `payloads` | `raw` から抜き出した大きな文字列（ペイロード）。リテラルの SHA-256、バイト数、`encoding`（`zstd` か `base64`）、中身（[ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)） |
 | `blobs` | ファイルの中身（SHA-256 で重複を除く） |
 | `file_versions` | ファイルごとの種類の、パスと中身の版 |
 | `runs` | 実行ごとの開始・終了の時刻、件数、失敗（JSON の配列） |
@@ -89,6 +90,19 @@ ai-chat-logs の現行の仕様をまとめる。
 | `messages`（ビュー） | 会話のメッセージ。いまは `claude-code/transcript` の `user` と `assistant` のレコード（提供元、セッションID、`uuid`、親の `uuid`、時刻、役割、モデル、サイドチェーンか、`cwd`、内容、元のパス） |
 
 - `records` の索引：`(session_id, timestamp)`、`(session_id, type, timestamp, uuid, source_id, line_no)`、`(uuid, session_id, source_id, line_no)`。後ろの2つで、セッションのメッセージの選び出しと写しの判定を、`records` の本体を読まずに行う（`type` と `uuid` は `raw` の後ろの列で、読むと `raw` のオーバーフローのページをたどるため。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)）。
+
+### ペイロード
+
+[ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)
+
+- 取り込んだ行の JSON の文字列のうち、リテラル（両端の `"` とエスケープを含む、`raw` の中のバイト列）が 1024 バイト以上で、SQL が読む場所に無いものを `payloads` に移す。SQL が読む場所：最上位のメンバーの値、`$.message` の直下のメンバーの値、`$.message.content[*]` の `type`、`text`、`thinking`。`tool_result` の `content`、`tool_use` の `input` の中の文字列、画像の `data`、思考の `signature` などは移る。オブジェクトのキーは移さない。
+- `payloads` の行はリテラルの SHA-256 で重複を除く。`base64`：リテラルが標準の base64（`=` の埋めを含み、改行もエスケープも無い）だけで、復号して符号化しなおすと同じになるもの。中身は復号したバイナリ。`zstd`：それ以外。中身はリテラルを zstd（レベル3）で圧縮したもの。消さない。
+- `raw` のリテラルは、目印のリテラル `"\u0000ai-chat-logs-payload:<sha256>"` に置きかえる。置きかえた後も正しい JSON である。戻すときは目印を文字列として置きかえるので、取り込んだ行とバイト単位で同じになる。取り込みでは、戻したものが元の行と同じになることを確かめ、同じでなければ移さない。正しい JSON でない行と、元から `\u0000ai-chat-logs-payload:` を含む行からは移さない。
+- `payload_state`：`NULL` はまだ処理していない、`0` は移したものが無い、`1` は `raw` に目印がある。
+- 取り込みでは、行を元のまま入れて索引と要約を作った後に、同じトランザクションの中で移す。`chat-log-import` は取り込みの後に、`payload_state` が `NULL` の行（スキーマ 6 より前に取り込んだもの）を、1万行ずつのトランザクションで移す。
+- `chat-log` と GUI は、`raw` を JSON として読む前に、`payload_state` が `1` なら戻す。本文と思考は移らないので、検索の一致した種類の判定（`matched_in`）は戻さずに読む。
+- SQL で `raw` を直に読むと（`sqlite3` や `messages` のビュー）、移した文字列は目印として見える。
+- 移して空いたページは SQLite の空きページとして残り、次からの取り込みで使いまわされる。ファイルを縮めるには、取り込みを止めて `VACUUM` を実行する。
 
 ### 検索の索引とセッションの要約
 
@@ -124,7 +138,7 @@ ai-chat-logs の現行の仕様をまとめる。
 [ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
 
 - `gui/`。Tauri 2、Rust（`rusqlite`）、TypeScript（フレームワークなし）、Tailwind CSS 4。
-- データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`（環境変数、`.env`、設定ファイルの順。[ADR 0007](adr/0007-settings-and-setup-screen.md)）、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。見つからない、またはスキーマの版が2より古いときは、その旨を画面に出す。
+- データベースは読み取り専用で開く。場所は `AI_CHAT_LOGS_DB`（環境変数、`.env`、設定ファイルの順。[ADR 0007](adr/0007-settings-and-setup-screen.md)）、無ければ `${XDG_DATA_HOME:-$HOME/.local/share}/ai-chat-logs/logs.sqlite`。見つからない、またはスキーマの版が6より古いときは、その旨を画面に出す。`raw` は、ペイロードを戻してから読む（[ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)）。
 - コマンド：`status`、`list_projects`（提供元と `cwd` ごと）、`list_sessions`（`provider`、`cwd`、`offset`、`limit`。`last_at` の新しい順）、`get_messages`（`session_id`、`from`、`limit`。写しを除いたメッセージに、時刻（`timestamp`）の順（同じ時刻はパス・`generation`・行番号の順）で1始まりの番号を付け、番号が `from`〜`from + limit - 1` のものと、総数（`session_summaries` のメッセージ数）を返す。[ADR 0014](adr/0014-load-conversations-in-pages.md)、[ADR 0016](adr/0016-show-conversations-newest-first.md)）、`get_block`（`rowid`、ブロックの位置。全文）、`search`（`query`、`provider`、`cwd`、`offset`、`limit`。時刻の新しい順。各件にメッセージの番号 `index`。番号は、1ページのヒットをセッションごとにまとめて1回で求める。[ADR 0017](adr/0017-faster-message-numbers-for-search-hits.md)）。
 - トップページ（セッションを開く前の会話の欄）：`データベース: <パス>（<容量>）`。容量はデータベースの本体、`-wal`、`-shm` のファイルの大きさの合計で、`status` が返す（本体が無ければ無しで、パスだけを出す）。1000 を単位に B、KB、MB、GB、TB のうち値が 1000 未満になる最も大きい単位で、小数第2位まで（B は整数）。トップページを出すたびに読みなおす（[ADR 0025](adr/0025-gui-show-database-size.md)）。
 - 会話の並び：メッセージを新しい順（番号の大きい順）に出す。いちばん上が最後のメッセージ。1つのメッセージの中のブロックの順は変えない（[ADR 0016](adr/0016-show-conversations-newest-first.md)）。
@@ -196,7 +210,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0011](adr/0011-cli-for-ai-agents.md)、[ADR 0013](adr/0013-chat-log-output-corrections.md)、[ADR 0018](adr/0018-chat-log-snippets-until-and-help.md)、[ADR 0019](adr/0019-chat-log-thinking-around-hits.md)、[ADR 0020](adr/0020-chat-log-mark-omitted-messages.md)、[ADR 0021](adr/0021-search-tool-inputs-and-results.md)、[ADR 0022](adr/0022-search-exclude-terms.md)、[ADR 0023](adr/0023-chat-log-around-navigation-lines.md)
 
-- `chat-log <context | sessions | search | show | export>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が5より古ければ終了コード2。
+- `chat-log <context | sessions | search | show | export>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が6より古ければ終了コード2（[ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)）。
 - 共通のオプション：`--provider`、`--cwd`（そのディレクトリか、その下。既定で絞るのは `context` だけ）、`--all`（`context`）、`--since`・`--until`（ISO 8601 か `7d`・`12h`・`30m`。日付だけは UTC の 0 時、オフセットの無い時刻は手元の時刻帯。`search` はメッセージの時刻、`sessions` と `context` は `--since` を最後の時刻・`--until` を最初の時刻と比べる。`show` には効かない）、`--limit`、`--offset`、`--max-chars`（0 で切らない）、`--json`（JSON Lines）。
 - `sessions`：`<最後の時刻>\t<提供元>\t<IDの先頭8文字>\t<メッセージ数>\t<タイトル>\t<cwd>`。新しい順。既定 50 件。
 - `search <語...>`：GUI と同じ検索の規則（3文字以上は FTS5、3文字未満は `LIKE`、写しは除く）。1件2行（`<時刻>\t<提供元>\t<ID>#<番号>\t<役割>\t<タイトル>`、`\t<抜粋>`）。抜粋は本文から作り、語ごとに最初に一致した位置の前後32文字を切り出して、重なる・隣りあう範囲をまとめ、一致を切らないように広げ、範囲のあいだと切ったところに `…` を置く（どの語も見つからなければ先頭の64文字）。範囲の中のすべての一致を `⟪ ⟫` で囲み、重なる・隣りあう強調は1つにまとめる。思考にだけ一致したときは抜粋の先頭に `[thinking] `。`--tools` を付けると `record_tool_texts` も探し、本文かツールのテキストのどちらかがすべての語を含むレコードを出す（両方に一致すれば本文の一致とする）。ツールにだけ一致したときは、抜粋をツールのテキストから作り、先頭に `[tool] `。`--exclude <語>`（何度でも）は、一致したテキストにどれかの除く語を含むものを除く（3文字以上は FTS5、3文字未満は `NOT LIKE`。抜粋では強調しない。語が無ければ終了コード2）。`--json` の `matched_in`（ツールにだけ一致したときは `["tool"]`）。既定 20 件。

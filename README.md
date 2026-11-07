@@ -66,6 +66,7 @@ bin/install
 ### リポジトリを更新したとき
 
 - `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
+- スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。新しい `chat-log` と GUI はスキーマ 6 を要るので、入れなおす前か直後に取り込み（`bin/sync`）を1回走らせる。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
 - `bin/install` でコマンドを入れている場合は、`bin/install` を実行しなおす。リポジトリを動かした場合も同じ。
 - `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
 
@@ -172,6 +173,22 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 ```
 
 表とビューは [docs/specifications.md](docs/specifications.md) を参照。
+
+`records.raw` のうち、1024 バイト以上の文字列（ツールの結果、ツールの入力、画像など）は `payloads` の表に移してあり、`raw` には目印（`"\u0000ai-chat-logs-payload:<sha256>"`）が入っている。本文、思考、`cwd` などの SQL で読む値は移さない。元のとおりの行が要るときは、`chat-log show --json` や `chat-log export` を使う（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）。
+
+### データベースを縮める
+
+スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）への移行で、大きな文字列は `payloads` の表に、重複を除いて圧縮して移る。移した後の空きは、次からの取り込みで使いまわされるが、ファイルは縮まない。ファイルを縮めるときは、取り込みを止めて `VACUUM` を実行する。
+
+```sh
+pm2 stop ai-chat-logs-sync
+sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite VACUUM
+pm2 start ai-chat-logs-sync
+```
+
+- `VACUUM` は、データベースと同じくらいの空き容量を一時的に使う。
+- 2026-11-08 の手元のデータベース（7.78 GB、84.5 万行）では、移行の変換が 38 秒、その後の `VACUUM INTO` が 10 秒かかり、5.33 GB になった（`records` が 5,767 MB から 2,359 MB に、`payloads` が 1,156 MB）。
+- GUI は読み取り専用で開くので、`VACUUM` の間は開いていてもよいが、待たされることがある。
 
 ### AI に履歴を引かせる（chat-log）
 
