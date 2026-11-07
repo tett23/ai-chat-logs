@@ -215,11 +215,12 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ## ADR の保護
 
-[ADR 0009](adr/0009-update-adr-guard-to-v0-8-2.md)、[ADR 0012](adr/0012-update-adr-guard-to-v0-8-3.md)
+[ADR 0009](adr/0009-update-adr-guard-to-v0-8-2.md)、[ADR 0012](adr/0012-update-adr-guard-to-v0-8-3.md)、[ADR 0028](adr/0028-update-adr-guard-to-v0-10-0.md)
 
-- コミット済みの ADR の変更は、adr-guard で拒否する。pre-commit の hook（`.githooks/pre-commit`）は `adr-guard pre-commit --allow-status --allow-links`、CI の `adr` ジョブは `tett23/adr-guard@v0.8.3`（`allow-status: true`、`allow-links: true`）。
+- コミット済みの ADR の変更は、adr-guard で拒否する。pre-commit の hook（`.githooks/pre-commit`）は `adr-guard pre-commit --allow-status --allow-links`、CI の `adr` ジョブは `tett23/adr-guard@v0.10.0`（`allow-status: true`、`allow-links: true`）。CI は ADR の番号の重複も検査する（`adr-guard check-numbers`）。
 - 許可するのは、ステータスの行の変更と、リンクだけの変更（リンクの追加・削除・リンク先の変更、画像のリンク先、リンクの参照定義の行）。リンクのテキスト、画像の追加・削除、自動リンクや本文の URL の変更は拒否する。
 - ADR のステータスには、`採択（未実装）`（採択したが、まだ実装していない）を使える。`adr-guard unimplemented` で一覧できる。
+- ADR の参照（`ADR NNNN`）の直前に空白1つで置いた語は修飾子とみなされる。`/` を含む語はディレクトリ、`-` を含む語はモジュール（`docs/<モジュール>/adr/`）を表し、そのディレクトリや ADR が無ければ検査で失敗する。ほかのリポジトリの ADR は、リンクのテキストごと外部リンクにして書く（例：`[tett23/adr-guard ADR 0019「…」](https://github.com/tett23/adr-guard/blob/main/docs/adr/…)`）。
 
 ## 破棄したADR
 
