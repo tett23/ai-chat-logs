@@ -67,15 +67,19 @@ bin/install
 ### リポジトリを更新したとき
 
 - `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
-- スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。現在の必要なスキーマ版と更新手順は、次の「スキーマ 7 へ更新するとき」を参照。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
+- スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。更新手順は以下のスキーマ別の説明を参照。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
 - `bin/install` でコマンドを入れている場合は、`bin/install` を実行しなおす。リポジトリを動かした場合も同じ。
 - `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+
+### スキーマ 8 へ更新するとき
+
+GUI はスキーマ 8、読み出し用の `chat-log` は 7 以降を使用する。定期取り込みと GUI を終了し、SQLite の `.backup` でバックアップを取ってから、新しい `chat-log-import` で取り込む。初回は保存済みの Codex 原本から表示用の情報を作る。既存の会話、全文検索の索引、原本はそのまま残る。更新後は GUI で会話と検索を確認して定期取り込みを再開する。
 
 ### スキーマ 7 へ更新するとき
 
 スキーマ 7 は、Codex の会話を保存するためのビューと、提供元を区別する会話取得に対応する（[ADR 0033](docs/adr/0033-codex-conversation-database-migration.md)）。
 既存の記録、検索索引、要約は保持する。
-新しい `chat-log` と GUI はスキーマ 7 が必要になる。
+この版の `chat-log` と GUI はスキーマ 7 が必要になる。
 
 1. `pm2 stop ai-chat-logs-sync` で定期取り込みを止め、GUI からの取り込みも終了させる。
 2. SQLite のバックアップ機能で退避する。既定の DBなら `sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite '.backup /absolute/path/logs-before-v7.sqlite'` とする。稼働中の DB本体だけをコピーしない。
@@ -293,6 +297,10 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 会話一覧、検索結果、会話ヘッダーでは、Claude Code、claude.ai、Cowork、Codex をそれぞれの名前で表示する（[ADR 0032](docs/adr/0032-codex-import-ui-and-provider-labels.md)）。
 保存済みのタイトルは変えない。
 Codex は作業ディレクトリごとに絞れ、記録にディレクトリが無い会話は「Codex / 作業ディレクトリなし」で選べる。
+
+起動時の一覧と検索には、通常の会話と分類できない会話を表示する。Codex のサブエージェントや内部処理を探すには、会話の種類を切り替える。親の会話が保存されていれば、子から親を開ける。Codex の見出しには先頭の環境指示を取り除いた利用者の依頼を使う（[ADR 0037](docs/adr/0037-codex-session-presentation.md)）。
+
+暗号化されて読めない箇所を確認したいときは「表示できない内容」をオンにする。この設定は次回も引き継ぐ。置き換え表示の文言は検索対象から除くが、利用者自身が同じ文言を書いた発言は検索できる。
 
 管理画面では、既存の設定と同じ方法で Codex の読み込み元と保存先を設定する。
 空欄で保存するとその設定を消し、環境変数、`.env`、設定ファイル、既定の順に値を決め直す。
