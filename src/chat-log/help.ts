@@ -1,7 +1,7 @@
 // docs/adr/0011: help written so that an AI agent can use chat-log from it alone.
 
 const COMMON = `共通のオプション:
-  --provider <名前>     提供元で絞る（claude-code、claude-cowork、claude-ai）
+  --provider <名前>     提供元で絞る（claude-code、claude-cowork、claude-ai、codex）
   --cwd <ディレクトリ>   セッションの cwd が、そのディレクトリか、その下のものに絞る（相対パスは絶対パスにする）
                         既定で絞るのは context だけ。sessions、search、show は絞らないので、
                         いまのプロジェクトに絞るには --cwd . を付ける
@@ -51,12 +51,13 @@ const SEARCH = `chat-log search <語...> [オプション]
     	<抜粋>
   思考（thinking）にだけ一致したときは、抜粋の先頭に [thinking] が付く。ツールにだけ一致したときは [tool] が付き、
   抜粋はツールのテキストから作る（show --around <番号> --tools で全文を読める）。
-  <セッションIDの先頭8文字> と <メッセージの番号> は、そのまま show と show --around に渡せる。
+  <セッションIDの先頭8文字> と <メッセージの番号> は show と show --around に渡せる。同じ ID が複数提供元にあるときは --provider を添える。
   show --around はその範囲のメッセージの思考も出すので、[thinking] の付いた結果もそのまま読める。
   --json: provider、session_id、index、uuid、timestamp、role、title、snippet、matched_in（["text"]、["thinking"]、["text","thinking"]、["tool"]）`;
 
 const SHOW = `chat-log show <セッションID> [オプション]
   1つのセッションのメッセージを順に出す。セッションIDは、ほかと区別できれば先頭8文字以上でよい。
+  同じ ID が複数提供元にある場合は候補を表示する。--provider <名前> で1つに絞る。
   メッセージの番号は、そのセッションの中の通し番号（1始まり、時刻の順）。
   --around <番号>       その番号を含む --limit 件を出す。番号の前に --limit の半分（切り捨て）件を置く。
                         --limit 1 ならその番号の1件だけ。search の #<番号> をそのまま渡せる。
@@ -79,15 +80,16 @@ const SHOW = `chat-log show <セッションID> [オプション]
   続きがあるときは最後に「（続き：#<次の番号> から。--offset <数> で出す）」の行。--around のときも、その --offset で続きを出せる。
   --around で1件目より後から始まったときは、先頭に「（前：#<最初>〜#<数> は --offset <数> で出す）」の行。
   前の行は、範囲の直前の同じ件数の範囲を指す。--around で --limit 1 のときは、前と続きの行を出さない。
-  --json: index、uuid、timestamp、role、model、is_sidechain、blocks（kind と text、name、input、type、truncated_from）`;
+  --json: index、uuid、timestamp、role、model、is_sidechain、original_id、version、blocks（kind と text、name、input、type、truncated_from）`;
 
 // docs/adr/0026
-const EXPORT = `chat-log export <セッションID>
+const EXPORT = `chat-log export <セッションID> [--provider <名前>]
   1つのセッションの全文を Markdown で標準出力に書く（ファイルに残すときは > <ファイル> で受ける）。
   写しを除いたすべてのメッセージを番号の順に書く。本文、思考、ツールの入出力を切らずに書く
   （200文字以上の base64 だけは [base64 <文字数> 文字] にする）。本文が空の思考と、書くものが無いメッセージは書かない。
   思考とツールは <details> で折りたたむ。人が読むためのもので、AI が読むには show を使う。
-  --provider、--cwd、--since、--until、--limit、--offset、--max-chars、--json は付けられない。
+  同じ ID が複数提供元にある場合は --provider <名前> で1つに絞る。
+  --cwd、--since、--until、--limit、--offset、--max-chars、--json は付けられない。
   出力:
     # <タイトル>
     - セッション、提供元、cwd、期間、メッセージの件数
@@ -96,7 +98,7 @@ const EXPORT = `chat-log export <セッションID>
 
 export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, export: EXPORT };
 
-export const MAIN_HELP = `chat-log: Claude の会話の履歴（Claude Code、Cowork、claude.ai）を引く、読み取り専用の CLI。
+export const MAIN_HELP = `chat-log: Claude と Codex の会話の履歴を引く、読み取り専用の CLI。
 AI のエージェントが、過去の経緯や決定を思い出して文脈を戻すために使う。
 
 使う順序の勧め: context → search → show --around
@@ -127,8 +129,8 @@ ${COMMON}
 
 終了コード:
   0  成功（結果が0件のときも含む）
-  1  指定したセッションが無い、セッションIDが区別できない（候補を標準エラー出力に書く）
-  2  使い方の誤り、データベースが無い・古い、設定の書式の誤り
+  1  指定したセッションが無い
+  2  セッションIDが区別できない（候補を標準エラー出力に書く）、使い方の誤り、データベースが無い・古い、設定の書式の誤り
 
 注意:
   - データベースは既定では4時間ごとの取り込みで更新される。最新の4時間ぶんが無いことがある。最新にしたいときは、先に bin/sync（インストールしたものは ai-chat-logs-sync）を実行する。

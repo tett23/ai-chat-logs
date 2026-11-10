@@ -70,6 +70,7 @@ pub fn scan_command(settings: &[Setting], path: Option<&str>) -> Result<CommandS
 pub fn export_command(
     settings: &[Setting],
     path: Option<&str>,
+    provider: &str,
     session_id: &str,
 ) -> Result<CommandSpec, String> {
     let bun = required(settings, settings::BUN, "bun")?;
@@ -83,6 +84,8 @@ pub fn export_command(
                 .into_owned(),
             "export".to_owned(),
             session_id.to_owned(),
+            "--provider".to_owned(),
+            provider.to_owned(),
         ],
         env: command_env(settings, Path::new(bun), path),
     })
@@ -337,11 +340,18 @@ mod tests {
     // docs/adr/0026
     #[test]
     fn builds_the_export_command() {
-        let spec = export_command(&sample(), Some("/usr/bin"), "aaaaaaaa-1111").unwrap();
+        let spec =
+            export_command(&sample(), Some("/usr/bin"), "claude-code", "aaaaaaaa-1111").unwrap();
         assert_eq!(spec.program, PathBuf::from("/tools/bin/bun"));
         assert_eq!(
             spec.args,
-            vec!["/repo/src/cli/chat-log.ts", "export", "aaaaaaaa-1111"]
+            vec![
+                "/repo/src/cli/chat-log.ts",
+                "export",
+                "aaaaaaaa-1111",
+                "--provider",
+                "claude-code"
+            ]
         );
         assert_eq!(
             spec.env,
@@ -351,7 +361,7 @@ mod tests {
             .into_iter()
             .filter(|s| s.key != settings::BUN)
             .collect();
-        assert!(export_command(&no_bun, None, "x").is_err());
+        assert!(export_command(&no_bun, None, "claude-code", "x").is_err());
     }
 
     #[test]

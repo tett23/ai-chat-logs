@@ -187,11 +187,19 @@ fn list_sessions(
     state: tauri::State<'_, AppState>,
     provider: Option<String>,
     cwd: Option<String>,
+    cwd_missing: bool,
     offset: i64,
     limit: i64,
 ) -> CommandResult<Vec<SessionSummary>> {
     with_db(&state, |c| {
-        store::list_sessions(c, provider.as_deref(), cwd.as_deref(), offset, limit)
+        store::list_sessions(
+            c,
+            provider.as_deref(),
+            cwd.as_deref(),
+            cwd_missing,
+            offset,
+            limit,
+        )
     })
 }
 
@@ -203,11 +211,14 @@ fn list_projects(state: tauri::State<'_, AppState>) -> CommandResult<Vec<Project
 #[tauri::command(async)]
 fn get_messages(
     state: tauri::State<'_, AppState>,
+    provider: String,
     session_id: String,
     from: usize,
     limit: usize,
 ) -> CommandResult<store::MessagePage> {
-    with_db(&state, |c| store::get_messages(c, &session_id, from, limit))
+    with_db(&state, |c| {
+        store::get_messages(c, &provider, &session_id, from, limit)
+    })
 }
 
 #[tauri::command(async)]
@@ -225,12 +236,21 @@ fn search(
     query: String,
     provider: Option<String>,
     cwd: Option<String>,
+    cwd_missing: bool,
     offset: i64,
     limit: i64,
 ) -> CommandResult<SearchResult> {
     let plan = query::plan_search(&query);
     with_db(&state, |c| {
-        store::search(c, &plan, provider.as_deref(), cwd.as_deref(), offset, limit)
+        store::search(
+            c,
+            &plan,
+            provider.as_deref(),
+            cwd.as_deref(),
+            cwd_missing,
+            offset,
+            limit,
+        )
     })
 }
 
@@ -424,6 +444,21 @@ fn execute(spec: &setup::CommandSpec, cwd: Option<&str>) -> Result<RunResult, St
     capture(spec, cwd).map(|o| to_run_result(&o))
 }
 
+fn convert_then_sync(
+    convert: impl FnOnce() -> CommandResult<RunResult>,
+    sync: impl FnOnce() -> CommandResult<RunResult>,
+) -> CommandResult<RunResult> {
+    let converted = convert()?;
+    if converted.exit_code != Some(0) {
+        return Ok(converted);
+    }
+    let imported = sync()?;
+    Ok(RunResult {
+        exit_code: imported.exit_code,
+        output: setup::tail(&format!("{}\n{}", converted.output, imported.output), 20),
+    })
+}
+
 /// Runs `f` unless another command is running, then reopens the database.
 fn exclusive<T>(
     state: &AppState,
@@ -482,13 +517,14 @@ fn export_to(
 #[tauri::command(async)]
 fn export_session(
     state: tauri::State<'_, AppState>,
+    provider: String,
     session_id: String,
     path: String,
 ) -> CommandResult<RunResult> {
     let env_path = std::env::var("PATH").ok();
     // Copy the settings so that the lock is not held while the export runs.
     let settings = with_loaded(&state, |l| Ok(l.settings.clone()))?;
-    let spec = setup::export_command(&settings, env_path.as_deref(), &session_id)
+    let spec = setup::export_command(&settings, env_path.as_deref(), &provider, &session_id)
         .map_err(settings_error)?;
     export_to(
         &spec,
@@ -514,21 +550,21 @@ fn import_claude_ai_export(
     let path = std::env::var("PATH").ok();
     exclusive(&state, |s| {
         let repo = settings::value(s, settings::REPO);
-        let convert = execute(
-            &setup::convert_command(s, path.as_deref(), Path::new(&zip)).map_err(settings_error)?,
-            repo,
-        )?;
-        if convert.exit_code != Some(0) {
-            return Ok(convert);
-        }
-        let sync = execute(
-            &setup::sync_command(s, path.as_deref()).map_err(settings_error)?,
-            repo,
-        )?;
-        Ok(RunResult {
-            exit_code: sync.exit_code,
-            output: setup::tail(&format!("{}\n{}", convert.output, sync.output), 20),
-        })
+        convert_then_sync(
+            || {
+                execute(
+                    &setup::convert_command(s, path.as_deref(), Path::new(&zip))
+                        .map_err(settings_error)?,
+                    repo,
+                )
+            },
+            || {
+                execute(
+                    &setup::sync_command(s, path.as_deref()).map_err(settings_error)?,
+                    repo,
+                )
+            },
+        )
     })
 }
 
@@ -542,6 +578,30 @@ struct ScanResult {
     output: String,
 }
 
+fn scan_then_sync(
+    scan: std::process::Output,
+    sync: impl FnOnce() -> CommandResult<RunResult>,
+) -> CommandResult<ScanResult> {
+    let scan_text = to_run_result(&scan).output;
+    let imported = setup::scanned_exports(&String::from_utf8_lossy(&scan.stdout));
+    let scan_exit_code = scan.status.code();
+    if !scan.status.success() {
+        return Ok(ScanResult {
+            imported,
+            scan_exit_code,
+            exit_code: None,
+            output: scan_text,
+        });
+    }
+    let result = sync()?;
+    Ok(ScanResult {
+        imported,
+        scan_exit_code,
+        exit_code: result.exit_code,
+        output: setup::tail(&format!("{scan_text}\n{}", result.output), 20),
+    })
+}
+
 /// docs/adr/0010: convert downloaded claude.ai exports, then import.
 #[tauri::command(async)]
 fn scan_claude_ai_exports(state: tauri::State<'_, AppState>) -> CommandResult<ScanResult> {
@@ -552,18 +612,63 @@ fn scan_claude_ai_exports(state: tauri::State<'_, AppState>) -> CommandResult<Sc
             &setup::scan_command(s, path.as_deref()).map_err(settings_error)?,
             repo,
         )?;
-        let sync = execute(
-            &setup::sync_command(s, path.as_deref()).map_err(settings_error)?,
-            repo,
-        )?;
-        let scan_text = to_run_result(&scan).output;
-        Ok(ScanResult {
-            imported: setup::scanned_exports(&String::from_utf8_lossy(&scan.stdout)),
-            scan_exit_code: scan.status.code(),
-            exit_code: sync.exit_code,
-            output: setup::tail(&format!("{scan_text}\n{}", sync.output), 20),
+        scan_then_sync(scan, || {
+            execute(
+                &setup::sync_command(s, path.as_deref()).map_err(settings_error)?,
+                repo,
+            )
         })
     })
+}
+
+#[cfg(test)]
+mod import_sequence_tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    #[test]
+    fn i5_failed_manual_conversion_does_not_sync() {
+        let mut syncs = 0;
+        let result = convert_then_sync(
+            || {
+                Ok(RunResult {
+                    exit_code: Some(1),
+                    output: "変換失敗".into(),
+                })
+            },
+            || {
+                syncs += 1;
+                Ok(RunResult {
+                    exit_code: Some(0),
+                    output: "sync".into(),
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(result.exit_code, Some(1));
+        assert_eq!(syncs, 0);
+    }
+
+    #[test]
+    fn i6_failed_scan_does_not_sync() {
+        let mut syncs = 0;
+        let scan = std::process::Output {
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"scan failed".to_vec(),
+        };
+        let result = scan_then_sync(scan, || {
+            syncs += 1;
+            Ok(RunResult {
+                exit_code: Some(0),
+                output: "sync".into(),
+            })
+        })
+        .unwrap();
+        assert_eq!(result.scan_exit_code, Some(1));
+        assert_eq!(result.exit_code, None);
+        assert_eq!(syncs, 0);
+    }
 }
 
 fn main() {
