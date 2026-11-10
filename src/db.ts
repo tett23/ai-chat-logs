@@ -8,9 +8,10 @@ import sessionMessageIndexes from "../schema/0004-session-message-indexes.sql" w
 import toolTexts from "../schema/0005-tool-texts.sql" with { type: "text" };
 import payloads from "../schema/0006-payloads.sql" with { type: "text" };
 import codexConversations from "../schema/0007-codex-conversations.sql" with { type: "text" };
+import codexPresentation from "../schema/0008-codex-session-presentation.sql" with { type: "text" };
 
 // docs/adr/0001: migrations are applied in order; PRAGMA user_version holds the applied count.
-const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders, sessionMessageIndexes, toolTexts, payloads, codexConversations];
+const MIGRATIONS: readonly string[] = [initial, searchAndSummaries, otherProviders, sessionMessageIndexes, toolTexts, payloads, codexConversations, codexPresentation];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
