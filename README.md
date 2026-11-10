@@ -1,7 +1,8 @@
 # ai-chat-logs
 
 AI のチャット履歴を SQLite に書き出し、定期的に保存するためのツール群。
-いまは Claude の履歴に対応する。Claude Code（デスクトップアプリの Code タブを含む）と Cowork は自動で、claude.ai のチャットは公式のエクスポートから取り込む。スキーマは、Claude 以外の AI の履歴も入れられる形にしてある。
+Claude Code（デスクトップアプリの Code タブを含む）、claude.ai、Cowork、Codex を区別して保存する。
+Claude Code、Cowork、Codex はローカルログから、claude.ai は公式のエクスポートから取り込む。
 
 Claude Code は、既定で30日を過ぎたセッションの履歴を削除する。
 このツールは、手元の履歴（`~/.claude/projects` の JSONL など）を差分で SQLite に取り込み、元のファイルが消えても取り込み済みの行を残す。
@@ -147,6 +148,8 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 */4 * * *` |
 | `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR` | デスクトップアプリのディレクトリ | `~/Library/Application Support/Claude` |
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
+| `AI_CHAT_LOGS_CODEX_DIR` | Codex のローカルログを読むディレクトリ | `~/.codex` |
+| `AI_CHAT_LOGS_CODEX_STORE` | Codex の原本と変換結果の保存先 | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/codex` |
 | `AI_CHAT_LOGS_CONFIG` | 読む設定ファイルのパス | `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env` |
 
 これらは、リポジトリのルートの `.env` と、設定ファイル（GUI の管理画面が書く）にも書ける。値は、環境変数、`.env`、設定ファイル、既定の順に決まる（[ADR 0007](docs/adr/0007-settings-and-setup-screen.md)）。書式はどちらも同じ。
@@ -230,11 +233,22 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
   - 環境の検査：パス、データベース、最後の取り込み、`bun`、pm2 の登録、launchd の登録。
   - 初期化：取り込み（データベースが無ければ作る）と、claude.ai のエクスポートの zip の取り込み。
 - GUI は取り込みのときに、このリポジトリ（`AI_CHAT_LOGS_REPO`。既定はビルドしたリポジトリ）のコマンドを `bun` で実行する。pm2 の操作はしない。
-- 左にセッションの一覧、上に検索の入力欄、右に会話を出す。会話を開く前の右の欄には、データベースのパスと、ディスクで使っている容量（`-wal` と `-shm` を含む）が出る（[ADR 0025](docs/adr/0025-gui-show-database-size.md)）。プロジェクトの絞り込みで、Claude Code のプロジェクトのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
+- 左にセッションの一覧、上に検索の入力欄、右に会話を出す。会話を開く前の右の欄には、データベースのパスと、ディスクで使っている容量（`-wal` と `-shm` を含む）が出る（[ADR 0025](docs/adr/0025-gui-show-database-size.md)）。プロジェクトの絞り込みで、Claude Code と Codex の作業ディレクトリのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 - 会話は新しい順に出す（いちばん上が最後のメッセージ。[ADR 0016](docs/adr/0016-show-conversations-newest-first.md)）。100件ずつ読みこみ、下へスクロールすると古いほうを、検索の結果から途中を開いたときは上へスクロールすると新しいほうを読みこむ（[ADR 0014](docs/adr/0014-load-conversations-in-pages.md)）。会話の上に、読みこんだ範囲と総数が出る。番号は時刻の順に付く（`chat-log` と同じ）。
 - 会話の上の「書き出す」で、開いているセッションの全文を Markdown のファイルに書き出せる（中身は `chat-log export` と同じ）。検索の結果から開いた会話では、本文の中の検索の語句が強調される（[ADR 0026](docs/adr/0026-export-sessions-and-highlight-terms.md)）。
 - 会話の上の「表示」のメニューで、thinking、tool_use、tool_result の行を隠せる。何も出なくなったメッセージは見出しごと隠れる。選んだ状態は次に起動したときも残る（[ADR 0024](docs/adr/0024-gui-conversation-header-and-block-filter.md)）。
+
+### Codex の表示と設定
+
+会話一覧、検索結果、会話ヘッダーでは、Claude Code、claude.ai、Cowork、Codex をそれぞれの名前で表示する（[ADR 0032](docs/adr/0032-codex-import-ui-and-provider-labels.md)）。
+保存済みのタイトルは変えない。
+Codex は作業ディレクトリごとに絞れ、記録にディレクトリが無い会話は「Codex / 作業ディレクトリなし」で選べる。
+
+管理画面では、既存の設定と同じ方法で Codex の読み込み元と保存先を設定する。
+空欄で保存するとその設定を消し、環境変数、`.env`、設定ファイル、既定の順に値を決め直す。
+Codex 専用の取り込みボタンは追加せず、既存の「取り込む」を使う。
+ChatGPT のエクスポートは未対応である。
 
 ## 開発
 
