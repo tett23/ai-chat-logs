@@ -621,6 +621,32 @@ fn scan_claude_ai_exports(state: tauri::State<'_, AppState>) -> CommandResult<Sc
     })
 }
 
+fn main() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .manage(AppState {
+            loaded: Mutex::new(load()),
+            running: AtomicBool::new(false),
+        })
+        .invoke_handler(tauri::generate_handler![
+            status,
+            list_sessions,
+            list_projects,
+            get_messages,
+            get_block,
+            search,
+            get_settings,
+            save_setting,
+            check_environment,
+            run_sync,
+            import_claude_ai_export,
+            scan_claude_ai_exports,
+            export_session
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running the application");
+}
+
 #[cfg(test)]
 mod import_sequence_tests {
     use super::*;
@@ -669,30 +695,4 @@ mod import_sequence_tests {
         assert_eq!(result.exit_code, None);
         assert_eq!(syncs, 0);
     }
-}
-
-fn main() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .manage(AppState {
-            loaded: Mutex::new(load()),
-            running: AtomicBool::new(false),
-        })
-        .invoke_handler(tauri::generate_handler![
-            status,
-            list_sessions,
-            list_projects,
-            get_messages,
-            get_block,
-            search,
-            get_settings,
-            save_setting,
-            check_environment,
-            run_sync,
-            import_claude_ai_export,
-            scan_claude_ai_exports,
-            export_session
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running the application");
 }
