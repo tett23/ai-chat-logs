@@ -190,13 +190,15 @@ fn list_sessions(
     cwd_missing: bool,
     offset: i64,
     limit: i64,
+    category: String,
 ) -> CommandResult<Vec<SessionSummary>> {
     with_db(&state, |c| {
-        store::list_sessions(
+        store::list_sessions_for_category(
             c,
             provider.as_deref(),
             cwd.as_deref(),
             cwd_missing,
+            &category,
             offset,
             limit,
         )
@@ -204,8 +206,22 @@ fn list_sessions(
 }
 
 #[tauri::command(async)]
-fn list_projects(state: tauri::State<'_, AppState>) -> CommandResult<Vec<Project>> {
-    with_db(&state, store::list_projects)
+fn list_projects(
+    state: tauri::State<'_, AppState>,
+    category: String,
+) -> CommandResult<Vec<Project>> {
+    with_db(&state, |c| store::list_projects_for_category(c, &category))
+}
+
+#[tauri::command(async)]
+fn get_session_summary(
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    session_id: String,
+) -> CommandResult<Option<SessionSummary>> {
+    with_db(&state, |c| {
+        store::get_session_summary(c, &provider, &session_id)
+    })
 }
 
 #[tauri::command(async)]
@@ -239,15 +255,17 @@ fn search(
     cwd_missing: bool,
     offset: i64,
     limit: i64,
+    category: String,
 ) -> CommandResult<SearchResult> {
     let plan = query::plan_search(&query);
     with_db(&state, |c| {
-        store::search(
+        store::search_for_category(
             c,
             &plan,
             provider.as_deref(),
             cwd.as_deref(),
             cwd_missing,
+            &category,
             offset,
             limit,
         )
@@ -632,6 +650,7 @@ fn main() {
             status,
             list_sessions,
             list_projects,
+            get_session_summary,
             get_messages,
             get_block,
             search,
