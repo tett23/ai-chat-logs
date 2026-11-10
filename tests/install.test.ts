@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync"];
+const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>
@@ -32,6 +32,18 @@ describe("bin/install", () => {
     const home = tempDir();
     const path = writeFile(join(home, ".claude/history.jsonl"), "");
     expect(run("claude-log-sources", { HOME: home }).stdout.toString()).toBe(`claude-code/history\t${path}\n`);
+  });
+
+  test("P1 P6 installed Codex commands read the same configured paths", () => {
+    const home = tempDir(), source = join(home, "source/sessions/one.jsonl"), store = join(home, "store");
+    writeFile(source, jsonl({ type: "session_meta", payload: { id: "installed" } }));
+    const env = { HOME: home, AI_CHAT_LOGS_CODEX_DIR: join(home, "source"), AI_CHAT_LOGS_CODEX_STORE: store };
+    expect(run("codex-log-convert", env).exitCode).toBe(0);
+    const listed = run("codex-log-sources", env);
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout.toString().split("\n").filter(Boolean)).toHaveLength(2);
+    expect(run("codex-log-convert", env, undefined, ["unexpected"]).exitCode).toBe(2);
+    expect(run("codex-log-sources", env, undefined, ["unexpected"]).exitCode).toBe(2);
   });
 
   test("does not read .env in the working directory", () => {

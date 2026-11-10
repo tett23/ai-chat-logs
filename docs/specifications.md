@@ -14,15 +14,17 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-log-sources`（`src/cli/sources.ts`） | なし | Claude の取り込む対象の、`<種類><タブ><絶対パス>` の行（パスの順） |
 | `chat-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
 | `claude-ai-export-scan`（`src/cli/claude-ai-export-scan.ts`） | なし | 受け取り用のディレクトリの新しい claude.ai のエクスポートを変換し、出力先を1行ずつ書く（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)） |
-| `bin/sync` | なし | `claude-ai-export-scan`、列挙、取り込みを順に実行する。列挙に失敗したら取り込まない。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す |
+| `codex-log-convert`（`src/cli/codex-log-convert.ts`） | 設定したログディレクトリ | Codex の原本と変換 JSONL を保存する |
+| `codex-log-sources`（`src/cli/codex-log-sources.ts`） | 設定した保存先 | Codex の `<種類><タブ><絶対パス>` を列挙する |
+| `bin/sync` | なし | claude.ai のスキャン、Codex の変換、全提供元の列挙、取り込みを行う。列挙に失敗したら取り込まず、スキャンや変換の部分失敗では残りを取り込み、最後に1を返す |
 
 `chat-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
 
 ### 種類と提供元
 
-種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code`、`claude-desktop`、`claude-cowork`、`claude-ai`（[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)）。
-列挙は提供元ごとのコマンド（いまは `claude-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
-提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、必要なら `messages` ビューの `UNION ALL` の枝を足す。表は変えない。
+種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code`、`claude-desktop`、`claude-cowork`、`claude-ai`、`codex`（[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)、[ADR 0034](adr/0034-import-codex-rollouts.md)）。
+列挙は提供元ごとのコマンド（`claude-log-sources`、`codex-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
+提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、本文、ツール、会話の各ビューの対象を追加する。表は変えない。
 
 ### 取り込む対象
 
@@ -40,6 +42,19 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-ai/export` | `$AI_CHAT_LOGS_CLAUDE_AI_DIR/<ID>/` の `conversations.json`、`projects.json`、`users.json` | ファイルごと |
 
 `CLAUDE_CONFIG_DIR` の既定は `~/.claude`。存在しないディレクトリは飛ばす。
+
+### Codex の原本と変換
+
+[ADR 0034](adr/0034-import-codex-rollouts.md)
+
+- `AI_CHAT_LOGS_CODEX_DIR` の `sessions` と `archived_sessions` 以下の通常ファイル `*.jsonl` を再帰的に読む。シンボリックリンクは辿らない。存在しないディレクトリは空、読めないものは失敗にする。
+- 完成した改行までのバイト列を SHA-256 の64桁で識別し、`AI_CHAT_LOGS_CODEX_STORE/<hash>/` に原本、`messages-v1.jsonl`、`manifest-v1.json` を保存する。一時ディレクトリから rename して公開し、ディレクトリは0700、ファイルは0600で保持する。
+- 先頭の `session_meta.payload.id` が会話 ID。後続のメタデータや `payload.session_id` で切り替えない。親から継承された履歴もそのファイルの記録として残す。
+- 変換行は `codex/conversation`、原本の行は `codex/rollout`。前者は既存と同じ `type`、`uuid`、`sessionId`、`timestamp`、`message` を持つ。元の位置は `sourceOrder` と `openai` に保持する。
+- user と assistant のテキスト、公開された reasoning summary、ツールの入出力、agent_message を変換する。event_msg を本文に加えない。system と developer や補助情報は原本だけに残す。
+- uuid は提供元、会話 ID、元の項目 ID、表示内容、role、親 ID、ブロックの種類を正規化した JSON の SHA-256。パスと取り込み時刻は含めない。元 IDが無い場合は物理行番号を使う。同文でも元 IDが異なれば別項目、内容が変われば別の版になる。
+- 未知の型と暗号化は警告として原本に残す。壊れた JSONや先頭の会話 ID の欠落は変換の終了コード1とし、正常な独立入力は続ける。末尾の未完行は次回に回す。
+- 同じ入力は再利用する。伸びたログは全体の新しいスナップショットとして保持する。自動削除や差分だけの保存はしない。
 
 ### 行ごとの取り込み
 
@@ -158,7 +173,7 @@ ai-chat-logs の現行の仕様をまとめる。
 - 会話の並び：メッセージを新しい順（番号の大きい順）に出す。いちばん上が最後のメッセージ。1つのメッセージの中のブロックの順は変えない（[ADR 0016](adr/0016-show-conversations-newest-first.md)）。
 - 会話の読みこみ：1ページ100件。一覧から開くと最後の1ページ（`総数 − 99`〜総数。総数は一覧のメッセージ数で、読みこんだ結果の総数と違えばその総数で読みこみなおす）、検索の結果から開くと一致した番号 N の 50 件前から100件。会話の欄の下端の 600px 以内までスクロールすると古い1ページを下に、上端の 600px 以内までスクロールすると新しい1ページを上に足す（上に足したときは、見ていた位置を保つ）。読みこんだメッセージは DOM から外さない。別のセッションを開いたら、前のセッションの読みこみの結果は捨てる。
 - 会話の欄の上端：読みこんだ範囲と総数（`<最初>〜<最後> / <総数>`）と「表示」のメニューを、スクロールしても上端に残す。メッセージの並びの上に余白を置き、一番上でもメッセージに重ならない（[ADR 0024](adr/0024-gui-conversation-header-and-block-filter.md)）。
-- 書き出し：会話の欄の上端の「書き出す」ボタン（セッションを開いているときだけ押せる）で保存先を選ぶと（既定のファイル名は `<タイトル>.md`。`/` と `:` は `-`、タイトルが無ければセッションID）、`<AI_CHAT_LOGS_REPO>/src/cli/chat-log.ts export <セッションID>` を取り込みと同じ環境で `bun` で実行し、標準出力を保存先と同じディレクトリの一時ファイルに書いてから置きかえる。失敗したら一時ファイルを消し、終了コードと標準エラー出力の最後の20行を出す（[ADR 0026](adr/0026-export-sessions-and-highlight-terms.md)）。
+- 書き出し：会話の欄の上端の「書き出す」ボタン（セッションを開いているときだけ押せる）で保存先を選ぶと（既定のファイル名は `<タイトル>.md`。`/` と `:` は `-`、タイトルが無ければセッションID）、`<AI_CHAT_LOGS_REPO>/src/cli/chat-log.ts export <セッションID> --provider <提供元>` を取り込みと同じ環境で `bun` で実行し、標準出力を保存先と同じディレクトリの一時ファイルに書いてから置きかえる。失敗したら一時ファイルを消し、終了コードと標準エラー出力の最後の20行を出す（[ADR 0026](adr/0026-export-sessions-and-highlight-terms.md)）。
 - 検索の語句の強調：検索の結果から開いた会話では、そのときの検索の語句（空白で分けたもの）を、テキストと開いた思考の本文（コードブロックの中を含む）で `<mark>` で強調する。ASCII の大文字と小文字を区別せず、重なる・隣りあう一致は1つにまとめる。ツールのブロックと見出しは強調しない。一覧から開いたときは強調しない（[ADR 0026](adr/0026-export-sessions-and-highlight-terms.md)）。
 - 「表示」のメニュー：thinking、tool_use、tool_result のチェックボックス（既定ですべて入る）。外した種類のブロックを隠し、出すブロックが無くなったメッセージは見出しごと隠す（ブロックの無いメッセージは隠さない。番号は変えない）。テキストと「その他」のブロックは隠せない。検索の結果から開いて強調するメッセージは、メッセージも中のブロックも隠さない。状態は WebView の `localStorage`（`ai-chat-logs:shown`）に保存し、読めなければすべて入った状態にする（[ADR 0024](adr/0024-gui-conversation-header-and-block-filter.md)）。
 - プロジェクトの絞り込み：Claude Code と Codex は `cwd` ごと、ほかの提供元は提供元ごとに1項目。
@@ -241,7 +256,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0011](adr/0011-cli-for-ai-agents.md)、[ADR 0013](adr/0013-chat-log-output-corrections.md)、[ADR 0018](adr/0018-chat-log-snippets-until-and-help.md)、[ADR 0019](adr/0019-chat-log-thinking-around-hits.md)、[ADR 0020](adr/0020-chat-log-mark-omitted-messages.md)、[ADR 0021](adr/0021-search-tool-inputs-and-results.md)、[ADR 0022](adr/0022-search-exclude-terms.md)、[ADR 0023](adr/0023-chat-log-around-navigation-lines.md)
 
-- `chat-log <context | sessions | search | show | export>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が7より古ければ終了コード2（[ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)）。
+- `chat-log <context | sessions | search | show | export>`。読み取り専用。データベースの場所は取り込みと同じ規則。スキーマの版が7より古ければ終了コード2（[ADR 0033](adr/0033-codex-conversation-database-migration.md)）。
 - 共通のオプション：`--provider`、`--cwd`（そのディレクトリか、その下。既定で絞るのは `context` だけ）、`--all`（`context`）、`--since`・`--until`（ISO 8601 か `7d`・`12h`・`30m`。日付だけは UTC の 0 時、オフセットの無い時刻は手元の時刻帯。`search` はメッセージの時刻、`sessions` と `context` は `--since` を最後の時刻・`--until` を最初の時刻と比べる。`show` には効かない）、`--limit`、`--offset`、`--max-chars`（0 で切らない）、`--json`（JSON Lines）。
 - `sessions`：`<最後の時刻>\t<提供元>\t<IDの先頭8文字>\t<メッセージ数>\t<タイトル>\t<cwd>`。新しい順。既定 50 件。
 - `search <語...>`：GUI と同じ検索の規則（3文字以上は FTS5、3文字未満は `LIKE`、写しは除く）。1件2行（`<時刻>\t<提供元>\t<ID>#<番号>\t<役割>\t<タイトル>`、`\t<抜粋>`）。抜粋は本文から作り、語ごとに最初に一致した位置の前後32文字を切り出して、重なる・隣りあう範囲をまとめ、一致を切らないように広げ、範囲のあいだと切ったところに `…` を置く（どの語も見つからなければ先頭の64文字）。範囲の中のすべての一致を `⟪ ⟫` で囲み、重なる・隣りあう強調は1つにまとめる。思考にだけ一致したときは抜粋の先頭に `[thinking] `。`--tools` を付けると `record_tool_texts` も探し、本文かツールのテキストのどちらかがすべての語を含むレコードを出す（両方に一致すれば本文の一致とする）。ツールにだけ一致したときは、抜粋をツールのテキストから作り、先頭に `[tool] `。`--exclude <語>`（何度でも）は、一致したテキストにどれかの除く語を含むものを除く（3文字以上は FTS5、3文字未満は `NOT LIKE`。抜粋では強調しない。語が無ければ終了コード2）。`--json` の `matched_in`（ツールにだけ一致したときは `["tool"]`）。既定 20 件。
@@ -254,9 +269,9 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0008](adr/0008-install-compiled-commands.md)
 
-- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
+- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`codex-log-convert`、`codex-log-sources`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
-- `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` を実行してから、`claude-log-sources` の出力を一度受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す。
+- `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` と `codex-log-convert` を実行してから、`claude-log-sources` と `codex-log-sources` の全出力を受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。スキャンや変換が失敗しても続け、最後に終了コード1を返す。
 
 ## ADR の保護
 

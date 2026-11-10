@@ -14,9 +14,11 @@ status=0
 # --no-env-file: the CLIs read the repository .env themselves, never the one in the working directory.
 # A failed scan is reported but does not stop the import.
 bun --no-env-file "$root/src/cli/claude-ai-export-scan.ts" >&2 || status=1
+bun --no-env-file "$root/src/cli/codex-log-convert.ts" >&2 || status=1
 
 # Collect the whole list first so that a failed listing never marks sources as missing.
-sources=$(bun --no-env-file "$root/src/cli/sources.ts")
-printf '%s\n' "$sources" | bun --no-env-file "$root/src/cli/import.ts" --mark-missing "$@" || status=1
+claude_sources=$(bun --no-env-file "$root/src/cli/sources.ts")
+codex_sources=$(bun --no-env-file "$root/src/cli/codex-log-sources.ts")
+printf '%s\n%s\n' "$claude_sources" "$codex_sources" | bun --no-env-file "$root/src/cli/import.ts" --mark-missing "$@" || status=1
 
 exit "$status"
