@@ -89,6 +89,11 @@ pub fn list_sessions(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<SessionSummary>> {
+    if cwd_missing && cwd.is_some() {
+        return Err(StoreError::Settings {
+            message: "cwd と cwd_missing は同時に指定できません".into(),
+        });
+    }
     let mut stmt = conn.prepare_cached(
         "SELECT provider, session_id, cwd, title, first_at, last_at, message_count
          FROM session_summaries
@@ -345,11 +350,11 @@ fn search_sql(
         }))
         .chain(provider.map(|p| ("s.provider = ?".to_owned(), SqlValue::Text(p.to_owned()))))
         .chain(cwd.map(|c| ("ss.cwd = ?".to_owned(), SqlValue::Text(c.to_owned()))))
-        .chain(cwd_missing.then_some(("ss.cwd IS NULL".to_owned(), SqlValue::Null)))
         .collect();
     let where_clause = conditions
         .iter()
         .map(|(c, _)| c.as_str())
+        .chain(cwd_missing.then_some("ss.cwd IS NULL"))
         .collect::<Vec<_>>()
         .join(" AND ");
     let sql = format!(
@@ -365,7 +370,7 @@ fn search_sql(
     );
     let params = conditions
         .into_iter()
-        .filter_map(|(condition, v)| (condition != "ss.cwd IS NULL").then_some(v))
+        .map(|(_, v)| v)
         .chain([SqlValue::Integer(limit), SqlValue::Integer(offset)])
         .collect();
     (sql, params)
@@ -380,6 +385,11 @@ pub fn search(
     offset: i64,
     limit: i64,
 ) -> Result<SearchResult> {
+    if cwd_missing && cwd.is_some() {
+        return Err(StoreError::Settings {
+            message: "cwd と cwd_missing は同時に指定できません".into(),
+        });
+    }
     if plan.is_empty() {
         return Ok(SearchResult {
             hits: vec![],
@@ -653,6 +663,22 @@ mod tests {
         .hits;
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id.as_deref(), Some("missing1"));
+        assert!(matches!(
+            list_sessions(&conn, Some("codex"), Some("/p"), true, 0, 10),
+            Err(StoreError::Settings { .. })
+        ));
+        assert!(matches!(
+            search(
+                &conn,
+                &plan_search("Codex"),
+                Some("codex"),
+                Some("/p"),
+                true,
+                0,
+                10
+            ),
+            Err(StoreError::Settings { .. })
+        ));
     }
 
     fn sample() -> PathBuf {
