@@ -286,11 +286,11 @@ describe("chat-log errors and help", () => {
     expect(chatLog(["show", "--help"]).out).toContain("--around");
   });
 
-  test("--help says the database is updated every four hours by default", () => {
+  test("H4 --help describes the full and additional Codex schedules", () => {
     const help = chatLog(["--help"]).out;
-    expect(help).toContain("既定では4時間ごとの取り込みで更新される");
-    expect(help).toContain("最新の4時間ぶんが無いことがある");
-    expect(help).not.toContain("毎時");
+    expect(help).toContain("全体を4時間ごと、Codex を追加で毎時30分");
+    expect(help).toContain("最新1時間分の保存は保証しない");
+    expect(help).toContain("bin/sync-codex（ai-chat-logs-codex-sync）");
   });
 
   test("the default output of a session with huge messages stays bounded", () => {

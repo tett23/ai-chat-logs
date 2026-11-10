@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync"];
+const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync", "ai-chat-logs-codex-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>
@@ -81,6 +81,15 @@ describe("bin/install", () => {
     const result = run("ai-chat-logs-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
     expect(result.exitCode).toBe(0);
     expect(new Database(dbPath, { readonly: true }).query("SELECT count(*) c FROM records").get()).toEqual({ c: 1 });
+  });
+
+  test("H1 H3 installed Codex sync runs without Bun or Claude scanner", () => {
+    const home = tempDir(), dbPath = join(home, "out.sqlite");
+    writeFile(join(home, "Downloads/broken.zip"), "not a ZIP");
+    writeFile(join(home, ".codex/sessions/one.jsonl"), jsonl({ type: "session_meta", payload: { id: "one" } }));
+    const result = run("ai-chat-logs-codex-sync", { PATH: `${prefix}:/usr/bin:/bin`, HOME: home, AI_CHAT_LOGS_DB: dbPath });
+    expect(result.exitCode).toBe(0);
+    expect(new Database(dbPath, { readonly: true }).query("SELECT count(*) c FROM sources WHERE kind = 'codex/rollout'").get()).toEqual({ c: 1 });
   });
 
   test("ai-chat-logs-sync converts exports in the inbox (docs/adr/0010)", () => {

@@ -50,7 +50,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 ### 設定を変えたとき
 
 - `.env` の `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`XDG_DATA_HOME`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_INBOX` は、次の取り込みから効く。登録しなおす必要は無い。
-- `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+- `AI_CHAT_LOGS_CRON` を変えたら、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs --only ai-chat-logs-sync`、`pm2 save` で登録しなおす。
 
 ### コマンドをインストールするとき
 
@@ -69,7 +69,7 @@ bin/install
 - `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
 - スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。更新手順は以下のスキーマ別の説明を参照。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
 - `bin/install` でコマンドを入れている場合は、`bin/install` を実行しなおす。リポジトリを動かした場合も同じ。
-- `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+- `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs --only ai-chat-logs-sync`、`pm2 save` で登録しなおす。
 
 ### スキーマ 8 へ更新するとき
 
@@ -121,6 +121,10 @@ Codex の `~/.codex/sessions` と `~/.codex/archived_sessions` 以下の JSONL �
 元ログは変更しない。
 同じ入力を再取り込みしても、会話の写しは増えない。
 ログが伸びた場合は新しいコピーを残すため、長い会話では保存容量が増える。
+
+Codex は全提供元の収集に加え、毎時30分にも収集する（[ADR 0036](docs/adr/0036-codex-hourly-collection.md)）。すぐに収集するには引数なしで `bin/sync-codex`（インストール版は `ai-chat-logs-codex-sync`）を実行する。スリープ中や収集失敗時は次の成功まで保存が遅れる。
+
+Codex の収集ログは `pm2 logs ai-chat-logs-codex-sync` で確認する。既存の専用ジョブを置き換えるときや `AI_CHAT_LOGS_CODEX_CRON` を変更したときは、実行終了後に `pm2 delete ai-chat-logs-codex-sync`、`pm2 start ecosystem.config.cjs --only ai-chat-logs-codex-sync`、`pm2 save` の順に実行する。DB の保守で取り込みを止めるときは両ジョブを対象にする。
 
 Codex の親とサブエージェントは別会話になる。
 公開された本文、思考の要約、ツールの呼び出しと結果、エージェント間通信を表示する。
@@ -183,7 +187,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 - `pm2 save` は、その時点で登録されているアプリを保存し、起動時に復元させる。`pm2 start` や `pm2 delete` で登録を変えたら、`pm2 save` をやりなおす。
 - 再起動の後に `pm2 status ai-chat-logs-sync` でアプリがあること、データベースの `runs` 表に新しい行が入っていることを確かめるとよい。
 - 登録した時点で1回実行され、以後は4時間ごと（0、4、8、12、16、20時）の0分に実行される（[ADR 0029](docs/adr/0029-sync-every-four-hours-by-default.md)）。間隔は `AI_CHAT_LOGS_CRON`（cron の式。環境変数か `.env`）で変えられる。
-- 間隔の既定や `AI_CHAT_LOGS_CRON` を変えたときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。登録したときの値が使われ続ける。
+- 間隔の既定や `AI_CHAT_LOGS_CRON` を変えたときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs --only ai-chat-logs-sync`、`pm2 save` で登録しなおす。登録したときの値が使われ続ける。
 - `pm2 start` を実行したシェルの `PATH` を引き継ぎ、`pm2 save` で保存される。`bun` が見つからないと、`bin/sync` は終了コード127で終わる。
 - 状態は `pm2 status ai-chat-logs-sync`、ログは `pm2 logs ai-chat-logs-sync` で見る。
 - 止めるときは `pm2 delete ai-chat-logs-sync` の後に `pm2 save` を実行する（しないと、次の起動時に復元される）。
@@ -200,6 +204,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `AI_CHAT_LOGS_CRON` | pm2 で実行する時刻（cron の式） | `0 */4 * * *` |
 | `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR` | デスクトップアプリのディレクトリ | `~/Library/Application Support/Claude` |
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
+| `AI_CHAT_LOGS_CODEX_CRON` | Codex 専用の収集時刻 | `30 * * * *` |
 | `AI_CHAT_LOGS_CODEX_DIR` | Codex のローカルログを読むディレクトリ | `~/.codex` |
 | `AI_CHAT_LOGS_CODEX_STORE` | Codex の原本と変換結果の保存先 | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/codex` |
 | `AI_CHAT_LOGS_CONFIG` | 読む設定ファイルのパス | `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env` |
@@ -214,7 +219,7 @@ cp .env.example .env   # 使う行のコメントを外して値を書く
 - 実行したディレクトリの `.env` は読まない。どこから実行しても、リポジトリのルートの `.env`（または `AI_CHAT_LOGS_ENV_FILE`）だけを読む。
 - `$` と `~` は展開しない。パスは絶対パスで書く。
 - `.env` か設定ファイルの書式に誤りがあると、CLI は終了コード2で終わり、`pm2 start` は失敗する。メッセージにファイルのパスと行番号が出る。
-- `AI_CHAT_LOGS_CRON` は `pm2 start` のときに読まれる。変えたら `pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+- `AI_CHAT_LOGS_CRON` は `pm2 start` のときに読まれる。変えたら `pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs --only ai-chat-logs-sync`、`pm2 save` で登録しなおす。
 
 書式の詳細は [docs/specifications.md](docs/specifications.md) を参照。
 
