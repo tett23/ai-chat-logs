@@ -100,6 +100,24 @@ describe("Codex presentation", () => {
     db.close();
   });
 
+  test("V4 stored agent_message masks encrypted block after the v1 author prefix", () => {
+    const root = tempDir(), db = openDatabase(join(root, "db.sqlite"));
+    const rows = [meta("agent", { subagent: { thread_spawn: { parent_thread_id: "parent" } } }),
+      { type: "response_item", payload: { type: "agent_message", id: "a", author: "worker", recipient: "parent", content: [
+        { type: "output_text", text: "公開部分" },
+        { type: "encrypted_content", encrypted_content: "cipher" },
+        { type: "output_text", text: "暗号化された内容は表示できない" },
+      ] } }];
+    expect(importSources(db, snapshot(root, rows), {}).errors).toEqual([]);
+    const converted = db.query<{ raw: string }, []>("SELECT r.raw FROM records r JOIN sources s ON s.id=r.source_id WHERE s.kind='codex/conversation' AND r.type='assistant'").get();
+    expect(JSON.parse(converted?.raw as string).message.content.map((block: { text: string }) => block.text)).toEqual([
+      "[worker → parent] 公開部分", "[worker → parent] 暗号化された内容は表示できない", "[worker → parent] 暗号化された内容は表示できない",
+    ]);
+    const mask = db.query<{ encrypted_block_indexes: string }, []>("SELECT encrypted_block_indexes FROM codex_item_presentation WHERE session_id='agent'").get();
+    expect(JSON.parse(mask?.encrypted_block_indexes as string)).toEqual([1]);
+    db.close();
+  });
+
   test("V6 failed conversation update rolls back and the next import retries", () => {
     const root = tempDir(), db = openDatabase(join(root, "db.sqlite"));
     const rows = [meta("s"), { type: "response_item", payload: { type: "reasoning", id: "r", encrypted_content: "cipher" } }];

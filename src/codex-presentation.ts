@@ -18,7 +18,7 @@ type StoredRow = { raw: string; payload_state: number | null; line_no: number };
 type ConversationRow = { session_id: string; uuid: string | null; raw: string; payload_state: number | null; rowid: number };
 type Existing = { snapshot_sha256: string | null; rule_version: number; source_record_max_rowid: number };
 
-const VERSION = 1;
+const VERSION = 2;
 const PLACEHOLDER = "暗号化された内容は表示できない";
 const obj = (x: unknown): Obj | null => x !== null && typeof x === "object" && !Array.isArray(x) ? x as Obj : null;
 const str = (x: unknown): string | null => typeof x === "string" ? x : null;
@@ -83,6 +83,10 @@ export const encryptedBlockIndexes = (item: unknown): number[] => {
   }
   return found;
 };
+
+const encryptedText = (item: Obj | null): string => item?.type === "agent_message"
+  ? `[${str(item.author) ?? "agent"} → ${str(item.recipient) ?? "unknown"}] ${PLACEHOLDER}`
+  : PLACEHOLDER;
 
 const sourceHash = (path: string): string | null => /(?:^|[/\\])([0-9a-f]{64})[/\\]rollout\.jsonl$/.exec(path)?.[1] ?? null;
 
@@ -185,10 +189,11 @@ export const rebuildCodexPresentation = (db: Database): PresentationError[] => {
             const projected = parse(line), uuid = str(projected?.uuid), sourceLine = obj(projected?.openai)?.sourceLine;
             if (uuid === null || typeof sourceLine !== "number") continue;
             const original = parse(rawLines[sourceLine - 1] ?? "");
-            const positions = encryptedBlockIndexes(obj(original?.payload));
+            const item = obj(original?.payload);
+            const positions = encryptedBlockIndexes(item);
             if (positions.length === 0) continue;
             const blocks = obj(projected?.message)?.content;
-            if (!Array.isArray(blocks) || positions.some((index) => obj(blocks[index])?.type !== "text" || obj(blocks[index])?.text !== PLACEHOLDER)) continue;
+            if (!Array.isArray(blocks) || positions.some((index) => obj(blocks[index])?.type !== "text" || obj(blocks[index])?.text !== encryptedText(item))) continue;
             const content = comparableContent(projected);
             if (content === null || !available.get(uuid)?.has(content)) continue;
             if (ambiguous.has(uuid)) continue;
