@@ -33,6 +33,8 @@ build() {
 }
 
 build claude-log-sources src/cli/sources.ts
+build codex-log-convert src/cli/codex-log-convert.ts
+build codex-log-sources src/cli/codex-log-sources.ts
 build chat-log-import src/cli/import.ts
 build claude-ai-export-convert src/cli/claude-ai-export-convert.ts
 build claude-ai-export-scan src/cli/claude-ai-export-scan.ts

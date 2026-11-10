@@ -76,5 +76,32 @@ describe("bin/sync", () => {
     const db = new Database(dbPath, { readonly: true });
     expect(db.query("SELECT count(*) c FROM records").get()).toEqual({ c: 1 });
   });
+
+  test("P7 imports Codex snapshots together with Claude sources after a partial conversion failure", () => {
+    const home = tempDir(), dbPath = join(home, "out.sqlite");
+    writeFile(join(home, ".claude/history.jsonl"), jsonl({ display: "Claude" }));
+    writeFile(join(home, ".codex/sessions/good.jsonl"), jsonl(
+      { type: "session_meta", payload: { id: "codex-owner", cwd: "/repo" } },
+      { type: "response_item", timestamp: "2026-11-11T00:00:00Z", payload: { type: "message", id: "m1", role: "user", content: [{ type: "input_text", text: "Codex" }] } },
+    ));
+    writeFile(join(home, ".codex/sessions/bad.jsonl"), jsonl({ type: "response_item", payload: { type: "message", role: "user", content: [] } }));
+    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: isolatedEnv({ HOME: home, AI_CHAT_LOGS_DB: dbPath }) });
+    expect(result.exitCode).toBe(1);
+    const db = new Database(dbPath, { readonly: true });
+    expect(db.query("SELECT count(*) c FROM sources WHERE kind = 'codex/conversation'").get()).toEqual({ c: 2 });
+    expect(db.query("SELECT count(*) c FROM sources WHERE kind = 'codex/rollout'").get()).toEqual({ c: 2 });
+    expect(db.query("SELECT count(*) c FROM sources WHERE kind = 'claude-code/history'").get()).toEqual({ c: 1 });
+  });
+
+  test("P7 Codex listing failure does not mark previously imported sources missing", () => {
+    const home = tempDir(), dbPath = join(home, "out.sqlite");
+    writeFile(join(home, ".claude/history.jsonl"), jsonl({ display: "Claude" }));
+    const env = isolatedEnv({ HOME: home, AI_CHAT_LOGS_DB: dbPath });
+    expect(Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env }).exitCode).toBe(0);
+    writeFile(join(home, "bad-store"), "file");
+    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: { ...env, AI_CHAT_LOGS_CODEX_STORE: join(home, "bad-store") } });
+    expect(result.exitCode).not.toBe(0);
+    expect(new Database(dbPath, { readonly: true }).query("SELECT missing_since m FROM sources").get()).toEqual({ m: null });
+  });
 });
 

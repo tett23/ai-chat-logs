@@ -7,6 +7,8 @@
   "type": "module",
   "bin": {
     "claude-log-sources": "src/cli/sources.ts",
+    "codex-log-convert": "src/cli/codex-log-convert.ts",
+    "codex-log-sources": "src/cli/codex-log-sources.ts",
     "chat-log-import": "src/cli/import.ts",
     "claude-ai-export-convert": "src/cli/claude-ai-export-convert.ts",
     "claude-ai-export-scan": "src/cli/claude-ai-export-scan.ts",

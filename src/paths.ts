@@ -22,3 +22,7 @@ export const claudeAiDir = (env: Env): string => env.AI_CHAT_LOGS_CLAUDE_AI_DIR 
 // docs/adr/0010: where claude-ai-export-scan looks for downloaded exports.
 export const claudeAiInbox = (env: Env): string => env.AI_CHAT_LOGS_CLAUDE_AI_INBOX || join(home(env), "Downloads");
 
+// docs/adr/0032, docs/adr/0034: Codex input and immutable local snapshots.
+export const codexDir = (env: Env): string => env.AI_CHAT_LOGS_CODEX_DIR || join(home(env), ".codex");
+export const codexStore = (env: Env): string => env.AI_CHAT_LOGS_CODEX_STORE || join(dataHome(env), "ai-chat-logs/codex");
+

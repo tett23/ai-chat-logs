@@ -7,9 +7,11 @@ status=0
 
 # A failed scan is reported but does not stop the import.
 "$dir/claude-ai-export-scan" >&2 || status=1
+"$dir/codex-log-convert" >&2 || status=1
 
 # Collect the whole list first so that a failed listing never marks sources as missing.
-sources=$("$dir/claude-log-sources")
-printf '%s\n' "$sources" | "$dir/chat-log-import" --mark-missing "$@" || status=1
+claude_sources=$("$dir/claude-log-sources")
+codex_sources=$("$dir/codex-log-sources")
+printf '%s\n%s\n' "$claude_sources" "$codex_sources" | "$dir/chat-log-import" --mark-missing "$@" || status=1
 
 exit "$status"
