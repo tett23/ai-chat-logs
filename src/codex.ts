@@ -89,7 +89,7 @@ export const convertCodexLines = (rawLines: readonly string[]): Conversion => {
     if (p === null || p.blocks.length === 0) return;
     if (firstUserText === null && p.type === "user" && item.type === "message") {
       const text = p.blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join(" ").trim();
-      if (text !== "") firstUserText = text.slice(0, 80);
+      if (text !== "") firstUserText = Array.from(text).slice(0, 80).join("");
     }
     const itemId = string(item.id) || String(index + 1);
     const parentId = string(item.parent_id) ?? string(item.parentUuid);
