@@ -9,16 +9,33 @@ const load = (env: Record<string, string | undefined>) => {
 };
 
 describe("ecosystem.config.cjs", () => {
-  test("defines one app every four hours running bin/sync without autorestart", () => {
+  test("H4 defines independent full and Codex schedules", () => {
     const { apps } = load({});
-    expect(apps).toHaveLength(1);
+    expect(apps).toHaveLength(2);
     expect(apps[0]).toMatchObject({ name: "ai-chat-logs-sync", script: "bin/sync", autorestart: false, cron_restart: "0 */4 * * *", cwd: repoRoot });
+    expect(apps[1]).toMatchObject({ name: "ai-chat-logs-codex-sync", script: "bin/sync-codex", interpreter: "/bin/sh", autorestart: false, cron_restart: "30 * * * *", cwd: repoRoot });
     expect(apps[0].env.PATH).toBe(process.env.PATH);
   });
 
   test("takes the schedule from AI_CHAT_LOGS_CRON", () => {
     const { apps } = load({ AI_CHAT_LOGS_CRON: "*/5 * * * *" });
     expect(apps[0].cron_restart).toBe("*/5 * * * *");
+    expect(apps[1].cron_restart).toBe("30 * * * *");
+  });
+
+  test("H4 takes only the Codex schedule from AI_CHAT_LOGS_CODEX_CRON", () => {
+    const { apps } = load({ AI_CHAT_LOGS_CODEX_CRON: "15 * * * *" });
+    expect(apps[0].cron_restart).toBe("0 */4 * * *");
+    expect(apps[1].cron_restart).toBe("15 * * * *");
+  });
+
+  test("H4 Codex schedule follows environment, .env, config precedence", () => {
+    const dir = tempDir();
+    const config = writeFile(join(dir, "config.env"), 'AI_CHAT_LOGS_CODEX_CRON="10 * * * *"\n');
+    const envFile = writeFile(join(dir, "my.env"), 'AI_CHAT_LOGS_CODEX_CRON="20 * * * *"\n');
+    expect(load({ AI_CHAT_LOGS_CONFIG: config }).apps[1].cron_restart).toBe("10 * * * *");
+    expect(load({ AI_CHAT_LOGS_CONFIG: config, AI_CHAT_LOGS_ENV_FILE: envFile }).apps[1].cron_restart).toBe("20 * * * *");
+    expect(load({ AI_CHAT_LOGS_CONFIG: config, AI_CHAT_LOGS_ENV_FILE: envFile, AI_CHAT_LOGS_CODEX_CRON: "40 * * * *" }).apps[1].cron_restart).toBe("40 * * * *");
   });
 
   test("takes the schedule from the env file", () => {
