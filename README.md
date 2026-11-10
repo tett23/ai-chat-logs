@@ -59,7 +59,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 bin/install
 ```
 
-- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log`（それぞれ 70MB ほど）と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
+- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log`（それぞれ 70MB ほど）、`codex-log-convert`、`codex-log-sources` と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
 - リポジトリの場所を埋めこむ。`.env` は、埋めこんだリポジトリのものを読む。実行したディレクトリの `.env` は読まない。
 - pm2 の定期実行と GUI の取り込みは、これまでどおりリポジトリの `bin/sync` を使う。インストールしたコマンドには依存しない。
 
@@ -86,6 +86,32 @@ pm2 や `bun` の場所が変わると、launchd に書き込まれた PATH と�
 
 クローンごとに `git config core.hooksPath .githooks` を実行する（下の「開発」を参照）。
 
+## Codex のログを保存する
+
+Codex の `~/.codex/sessions` と `~/.codex/archived_sessions` 以下の JSONL を、既存の `bin/sync` と定期取り込みで保存する（[ADR 0034](docs/adr/0034-import-codex-rollouts.md)）。
+読み込み元は `AI_CHAT_LOGS_CODEX_DIR`、保存先は `AI_CHAT_LOGS_CODEX_STORE` で変えられる。
+
+元ログの完成した行までを、その完成した範囲の SHA-256 を名前にしたディレクトリへコピーする。
+同じディレクトリに、閲覧用の `messages-v1.jsonl` と処理結果の `manifest-v1.json` を置く。
+元ログは変更しない。
+同じ入力を再取り込みしても、会話の写しは増えない。
+ログが伸びた場合は新しいコピーを残すため、長い会話では保存容量が増える。
+
+Codex の親とサブエージェントは別会話になる。
+公開された本文、思考の要約、ツールの呼び出しと結果、エージェント間通信を表示する。
+暗号化された内容は復号せず、表示できない旨を示す。
+同じ元 IDで内容が変わった項目は異なる版として保持する。
+
+`bin/install` でコマンドをインストールした後、変換、列挙、取り込みを分けて実行することもできる。
+
+```sh
+codex-log-convert
+codex-log-sources | chat-log-import
+```
+
+単独の Codex 列挙に `--mark-missing` を付けると、Claude の入力を見つからないものとして記録するため、付けない。
+全提供元をまとめて処理するときは `bin/sync` を使う。
+
 ## 使い方
 
 ### 1回だけ取り込む
@@ -94,7 +120,9 @@ pm2 や `bun` の場所が変わると、launchd に書き込まれた PATH と�
 bin/sync
 ```
 
-取り込む対象の列挙と取り込みは、別のコマンドに分かれている。`bin/sync` は次の2つをつなぐ。
+取り込む対象の列挙と取り込みは、別のコマンドに分かれている。
+`bin/sync` は claude.ai のスキャンと Codex の変換を行い、全提供元の列挙をまとめて取り込む。
+次は Claude だけを列挙する例。
 
 ```sh
 bun src/cli/sources.ts                             # "<種類>\t<絶対パス>" を1行ずつ出力する

@@ -14,15 +14,17 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-log-sources`（`src/cli/sources.ts`） | なし | Claude の取り込む対象の、`<種類><タブ><絶対パス>` の行（パスの順） |
 | `chat-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
 | `claude-ai-export-scan`（`src/cli/claude-ai-export-scan.ts`） | なし | 受け取り用のディレクトリの新しい claude.ai のエクスポートを変換し、出力先を1行ずつ書く（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)） |
-| `bin/sync` | なし | `claude-ai-export-scan`、列挙、取り込みを順に実行する。列挙に失敗したら取り込まない。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す |
+| `codex-log-convert`（`src/cli/codex-log-convert.ts`） | 設定したログディレクトリ | Codex の原本と変換 JSONL を保存する |
+| `codex-log-sources`（`src/cli/codex-log-sources.ts`） | 設定した保存先 | Codex の `<種類><タブ><絶対パス>` を列挙する |
+| `bin/sync` | なし | claude.ai のスキャン、Codex の変換、全提供元の列挙、取り込みを行う。列挙に失敗したら取り込まず、スキャンや変換の部分失敗では残りを取り込み、最後に1を返す |
 
 `chat-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
 
 ### 種類と提供元
 
-種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code`、`claude-desktop`、`claude-cowork`、`claude-ai`（[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)）。
-列挙は提供元ごとのコマンド（いまは `claude-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
-提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、必要なら `messages` ビューの `UNION ALL` の枝を足す。表は変えない。
+種類の名前は `<提供元>/<種類>`。提供元は履歴を書くツールの名前で、いまは `claude-code`、`claude-desktop`、`claude-cowork`、`claude-ai`、`codex`（[ADR 0006](adr/0006-import-cowork-and-claude-ai-chats.md)、[ADR 0034](adr/0034-import-codex-rollouts.md)）。
+列挙は提供元ごとのコマンド（`claude-log-sources`、`codex-log-sources`）、取り込みは提供元に依存しない `chat-log-import` が行う。
+提供元を足すときは、列挙のコマンド、`src/kinds.ts` の種類、行ごとの種類の抽出の関数（`src/extract.ts`）、本文、ツール、会話の各ビューの対象を追加する。表は変えない。
 
 ### 取り込む対象
 
@@ -40,6 +42,19 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-ai/export` | `$AI_CHAT_LOGS_CLAUDE_AI_DIR/<ID>/` の `conversations.json`、`projects.json`、`users.json` | ファイルごと |
 
 `CLAUDE_CONFIG_DIR` の既定は `~/.claude`。存在しないディレクトリは飛ばす。
+
+### Codex の原本と変換
+
+[ADR 0034](adr/0034-import-codex-rollouts.md)
+
+- `AI_CHAT_LOGS_CODEX_DIR` の `sessions` と `archived_sessions` 以下の通常ファイル `*.jsonl` を再帰的に読む。シンボリックリンクは辿らない。存在しないディレクトリは空、読めないものは失敗にする。
+- 完成した改行までのバイト列を SHA-256 の64桁で識別し、`AI_CHAT_LOGS_CODEX_STORE/<hash>/` に原本、`messages-v1.jsonl`、`manifest-v1.json` を保存する。一時ディレクトリから rename して公開し、ディレクトリは0700、ファイルは0600で保持する。
+- 先頭の `session_meta.payload.id` が会話 ID。後続のメタデータや `payload.session_id` で切り替えない。親から継承された履歴もそのファイルの記録として残す。
+- 変換行は `codex/conversation`、原本の行は `codex/rollout`。前者は既存と同じ `type`、`uuid`、`sessionId`、`timestamp`、`message` を持つ。元の位置は `sourceOrder` と `openai` に保持する。
+- user と assistant のテキスト、公開された reasoning summary、ツールの入出力、agent_message を変換する。event_msg を本文に加えない。system と developer や補助情報は原本だけに残す。
+- uuid は提供元、会話 ID、元の項目 ID、表示内容、role、親 ID、ブロックの種類を正規化した JSON の SHA-256。パスと取り込み時刻は含めない。元 IDが無い場合は物理行番号を使う。同文でも元 IDが異なれば別項目、内容が変われば別の版になる。
+- 未知の型と暗号化は警告として原本に残す。壊れた JSONや識別情報の欠落は変換の終了コード1とし、正常な独立入力は続ける。末尾の未完行は次回に回す。
+- 同じ入力は再利用する。伸びたログは全体の新しいスナップショットとして保持する。自動削除や差分だけの保存はしない。
 
 ### 行ごとの取り込み
 
@@ -108,7 +123,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0003](adr/0003-tauri-log-viewer-with-search.md)、[ADR 0005](adr/0005-log-viewer-corrections-and-details.md)
 
-- 会話の種類：`claude-code/transcript`、`claude-cowork/transcript`、`claude-ai/conversation`。
+- 会話の種類：`claude-code/transcript`、`claude-cowork/transcript`、`claude-ai/conversation`、`codex/conversation`。
 - 本文：会話の種類の `user` と `assistant` のレコードの、文字列の `message.content`、または `text` と `thinking` のブロックを改行でつないだもの。`tool_use` と `tool_result` は入れない。空なら入れない。
 - 写し：同じ提供元・セッションID・`uuid` のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。
 - 要約：メッセージが1つ以上あるセッションだけ。`first_at`・`last_at` はメッセージの時刻の最小と最大、`cwd` は時刻の順で最初のもの。
@@ -224,9 +239,9 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0008](adr/0008-install-compiled-commands.md)
 
-- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
+- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`codex-log-convert`、`codex-log-sources`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
-- `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` を実行してから、`claude-log-sources` の出力を一度受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。`claude-ai-export-scan` が失敗しても続け、最後に終了コード1を返す。
+- `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` と `codex-log-convert` を実行してから、`claude-log-sources` と `codex-log-sources` の全出力を受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。スキャンや変換が失敗しても続け、最後に終了コード1を返す。
 
 ## ADR の保護
 
