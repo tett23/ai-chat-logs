@@ -99,6 +99,7 @@ fn valid_category(category: &str) -> Result<()> {
 }
 
 /// Sessions newest first, optionally narrowed to a provider and a cwd (docs/adr/0006).
+#[cfg(test)]
 pub fn list_sessions(
     conn: &Connection,
     provider: Option<&str>,
@@ -163,6 +164,7 @@ pub struct Project {
     pub session_count: i64,
 }
 
+#[cfg(test)]
 pub fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
     list_projects_for_category(conn, "all")
 }
@@ -472,6 +474,7 @@ fn search_sql(
     (sql, params)
 }
 
+#[cfg(test)]
 pub fn search(
     conn: &Connection,
     plan: &SearchPlan,
@@ -484,6 +487,10 @@ pub fn search(
     search_for_category(conn, plan, provider, cwd, cwd_missing, "all", offset, limit)
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "existing provider and cwd filters plus ADR 0037 category and pagination"
+)]
 pub fn search_for_category(
     conn: &Connection,
     plan: &SearchPlan,

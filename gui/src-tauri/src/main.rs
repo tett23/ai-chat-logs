@@ -247,6 +247,10 @@ fn get_block(
 }
 
 #[tauri::command(async)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Tauri command passes existing search filters and ADR 0037 category separately"
+)]
 fn search(
     state: tauri::State<'_, AppState>,
     query: String,
