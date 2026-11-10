@@ -44,3 +44,8 @@ tmp="$prefix/.ai-chat-logs-sync.tmp.$$"
 cp "$root/bin/ai-chat-logs-sync" "$tmp"
 chmod +x "$tmp"
 place "$tmp" ai-chat-logs-sync
+
+tmp="$prefix/.ai-chat-logs-codex-sync.tmp.$$"
+cp "$root/bin/ai-chat-logs-codex-sync" "$tmp"
+chmod +x "$tmp"
+place "$tmp" ai-chat-logs-codex-sync

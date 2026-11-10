@@ -1,0 +1,19 @@
+#!/bin/sh
+# docs/adr/0036: installed Codex-only sync.
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  echo "ai-chat-logs-codex-sync: no arguments accepted" >&2
+  exit 2
+fi
+
+dir=$(cd "$(dirname "$0")" && pwd)
+status=0
+
+"$dir/codex-log-convert" >&2 || status=1
+if ! codex_sources=$("$dir/codex-log-sources"); then
+  exit 1
+fi
+printf '%s\n' "$codex_sources" | "$dir/chat-log-import" || status=1
+
+exit "$status"

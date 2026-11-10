@@ -133,7 +133,7 @@ ${COMMON}
   2  セッションIDが区別できない（候補を標準エラー出力に書く）、使い方の誤り、データベースが無い・古い、設定の書式の誤り
 
 注意:
-  - データベースは既定では4時間ごとの取り込みで更新される。最新の4時間ぶんが無いことがある。最新にしたいときは、先に bin/sync（インストールしたものは ai-chat-logs-sync）を実行する。
+  - データベースは既定では全体を4時間ごと、Codex を追加で毎時30分に取り込む。停止・スリープ・処理の遅延・失敗があるので、最新1時間分の保存は保証しない。最新にしたいときは bin/sync（インストールしたものは ai-chat-logs-sync）、Codex だけなら bin/sync-codex（ai-chat-logs-codex-sync）を実行する。
   - 履歴には秘密の情報が含まれうる。出力を外へ送らない。
   - データベースの場所は AI_CHAT_LOGS_DB（環境変数、リポジトリの .env、~/.config/ai-chat-logs/config.env の順）、無ければ ~/.local/share/ai-chat-logs/logs.sqlite。
 

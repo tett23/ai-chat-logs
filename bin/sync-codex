@@ -1,0 +1,24 @@
+#!/bin/sh
+# docs/adr/0036: collect Codex alone between full syncs.
+set -eu
+
+if [ "$#" -ne 0 ]; then
+  echo "sync-codex: no arguments accepted" >&2
+  exit 2
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "ai-chat-logs: bun is not found in PATH" >&2
+  exit 127
+fi
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+status=0
+
+bun --no-env-file "$root/src/cli/codex-log-convert.ts" >&2 || status=1
+if ! codex_sources=$(bun --no-env-file "$root/src/cli/codex-log-sources.ts"); then
+  exit 1
+fi
+printf '%s\n' "$codex_sources" | bun --no-env-file "$root/src/cli/import.ts" || status=1
+
+exit "$status"

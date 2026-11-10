@@ -22,5 +22,16 @@ module.exports = {
         PATH: process.env.PATH,
       },
     },
+    {
+      name: "ai-chat-logs-codex-sync",
+      script: "bin/sync-codex",
+      interpreter: "/bin/sh",
+      cwd: __dirname,
+      cron_restart: process.env.AI_CHAT_LOGS_CODEX_CRON ?? "30 * * * *",
+      autorestart: false,
+      env: {
+        PATH: process.env.PATH,
+      },
+    },
   ],
 };
