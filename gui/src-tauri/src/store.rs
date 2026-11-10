@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 /// The schema version (PRAGMA user_version) whose tables the GUI reads; 6 for the payloads of
 /// docs/adr/0031, without which records holding markers would show them.
-pub const REQUIRED_SCHEMA_VERSION: i64 = 6;
+pub const REQUIRED_SCHEMA_VERSION: i64 = 7;
 
 const SNIPPET_CONTEXT: usize = 32;
 
@@ -85,17 +85,24 @@ pub fn list_sessions(
     conn: &Connection,
     provider: Option<&str>,
     cwd: Option<&str>,
+    cwd_missing: bool,
     offset: i64,
     limit: i64,
 ) -> Result<Vec<SessionSummary>> {
+    if cwd_missing && cwd.is_some() {
+        return Err(StoreError::Settings {
+            message: "cwd と cwd_missing は同時に指定できません".into(),
+        });
+    }
     let mut stmt = conn.prepare_cached(
         "SELECT provider, session_id, cwd, title, first_at, last_at, message_count
          FROM session_summaries
          WHERE (?1 IS NULL OR provider = ?1) AND (?2 IS NULL OR cwd = ?2)
+           AND (?3 = 0 OR cwd IS NULL)
          ORDER BY last_at DESC, session_id
-         LIMIT ?3 OFFSET ?4",
+         LIMIT ?4 OFFSET ?5",
     )?;
-    let rows = stmt.query_map(params![provider, cwd, limit, offset], |row| {
+    let rows = stmt.query_map(params![provider, cwd, cwd_missing, limit, offset], |row| {
         Ok(SessionSummary {
             provider: row.get(0)?,
             session_id: row.get(1)?,
@@ -142,6 +149,8 @@ pub struct Message {
     pub role: Option<String>,
     pub model: Option<String>,
     pub is_sidechain: bool,
+    pub original_id: Option<String>,
+    pub version: Option<String>,
     pub blocks: Vec<Block>,
 }
 
@@ -170,6 +179,8 @@ fn to_message(
             .get("isSidechain")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        original_id: text(value.get("openai").and_then(|o| o.get("itemId"))),
+        version: text(value.get("openai").and_then(|o| o.get("version"))),
         blocks: content_blocks(&value)
             .into_iter()
             .map(|b| truncate(b, MAX_BLOCK_CHARS))
@@ -188,6 +199,7 @@ pub struct MessagePage {
 /// whose numbers are in [from, from + limit).
 pub fn get_messages(
     conn: &Connection,
+    provider: &str,
     session_id: &str,
     from: usize,
     limit: usize,
@@ -196,31 +208,38 @@ pub fn get_messages(
     // again scans the whole session.
     let total = conn
         .query_row(
-            "SELECT sum(message_count) FROM session_summaries WHERE session_id = ?1",
-            params![session_id],
+            "SELECT message_count FROM session_summaries WHERE provider = ?1 AND session_id = ?2",
+            params![provider, session_id],
             |row| row.get::<_, Option<i64>>(0),
         )?
         .unwrap_or(0) as usize;
     let to = from.saturating_add(limit).saturating_sub(1);
     let mut stmt = conn.prepare_cached(
         "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw, r.payload_state
-         FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
-               FROM session_messages WHERE session_id = ?1) x
+         FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''),
+                 CASE WHEN provider = 'codex' THEN CAST(raw ->> '$.sourceOrder' AS INTEGER) END,
+                 CASE WHEN provider = 'codex' THEN coalesce(raw ->> '$.uuid', '') ELSE path END,
+                 CASE WHEN provider = 'codex' THEN '' ELSE generation END,
+                 CASE WHEN provider = 'codex' THEN 0 ELSE line_no END) AS idx
+               FROM session_messages WHERE provider = ?1 AND session_id = ?2) x
          JOIN records r ON r.rowid = x.record_rowid
-         WHERE x.idx BETWEEN ?2 AND ?3
+         WHERE x.idx BETWEEN ?3 AND ?4
          ORDER BY x.idx",
     )?;
-    let rows = stmt.query_map(params![session_id, from as i64, to as i64], |row| {
-        // docs/adr/0031
-        let raw = crate::payloads::restored_raw(conn, row.get(4)?, row.get(5)?)?;
-        Ok(to_message(
-            row.get(0)?,
-            row.get::<_, i64>(1)? as usize,
-            row.get(2)?,
-            row.get(3)?,
-            &raw,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        params![provider, session_id, from as i64, to as i64],
+        |row| {
+            // docs/adr/0031
+            let raw = crate::payloads::restored_raw(conn, row.get(4)?, row.get(5)?)?;
+            Ok(to_message(
+                row.get(0)?,
+                row.get::<_, i64>(1)? as usize,
+                row.get(2)?,
+                row.get(3)?,
+                &raw,
+            ))
+        },
+    )?;
     Ok(MessagePage {
         total,
         messages: rows.collect::<rusqlite::Result<_>>()?,
@@ -246,7 +265,11 @@ fn message_indexes(conn: &Connection, hits: &[(i64, SearchHit)]) -> Result<HashM
         );
     let mut stmt = conn.prepare_cached(
         "SELECT record_rowid, n FROM (
-           SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS n
+           SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''),
+                 CASE WHEN provider = 'codex' THEN CAST(raw ->> '$.sourceOrder' AS INTEGER) END,
+                 CASE WHEN provider = 'codex' THEN coalesce(raw ->> '$.uuid', '') ELSE path END,
+                 CASE WHEN provider = 'codex' THEN '' ELSE generation END,
+                 CASE WHEN provider = 'codex' THEN 0 ELSE line_no END) AS n
            FROM session_messages WHERE provider = ?1 AND session_id = ?2)
          WHERE record_rowid IN (SELECT value FROM json_each(?3))",
     )?;
@@ -307,6 +330,7 @@ fn search_sql(
     plan: &SearchPlan,
     provider: Option<&str>,
     cwd: Option<&str>,
+    cwd_missing: bool,
     offset: i64,
     limit: i64,
 ) -> (String, Vec<SqlValue>) {
@@ -330,6 +354,7 @@ fn search_sql(
     let where_clause = conditions
         .iter()
         .map(|(c, _)| c.as_str())
+        .chain(cwd_missing.then_some("ss.cwd IS NULL"))
         .collect::<Vec<_>>()
         .join(" AND ");
     let sql = format!(
@@ -356,16 +381,22 @@ pub fn search(
     plan: &SearchPlan,
     provider: Option<&str>,
     cwd: Option<&str>,
+    cwd_missing: bool,
     offset: i64,
     limit: i64,
 ) -> Result<SearchResult> {
+    if cwd_missing && cwd.is_some() {
+        return Err(StoreError::Settings {
+            message: "cwd と cwd_missing は同時に指定できません".into(),
+        });
+    }
     if plan.is_empty() {
         return Ok(SearchResult {
             hits: vec![],
             slow: false,
         });
     }
-    let (sql, values) = search_sql(plan, provider, cwd, offset, limit);
+    let (sql, values) = search_sql(plan, provider, cwd, cwd_missing, offset, limit);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values), |row| {
         let text: String = row.get(6)?;
@@ -421,13 +452,14 @@ mod tests {
     use crate::query::plan_search;
     use serde_json::json;
 
-    const SCHEMA: [&str; 6] = [
+    const SCHEMA: [&str; 7] = [
         include_str!("../../../schema/0001-initial.sql"),
         include_str!("../../../schema/0002-search-and-summaries.sql"),
         include_str!("../../../schema/0003-other-providers.sql"),
         include_str!("../../../schema/0004-session-message-indexes.sql"),
         include_str!("../../../schema/0005-tool-texts.sql"),
         include_str!("../../../schema/0006-payloads.sql"),
+        include_str!("../../../schema/0007-codex-conversations.sql"),
     ];
 
     struct Line {
@@ -468,7 +500,7 @@ mod tests {
         SCHEMA
             .iter()
             .for_each(|sql| conn.execute_batch(sql).unwrap());
-        conn.execute_batch("PRAGMA user_version = 6").unwrap();
+        conn.execute_batch("PRAGMA user_version = 7").unwrap();
         lines.iter().enumerate().for_each(|(i, l)| {
             conn.execute(
                 "INSERT OR IGNORE INTO sources (kind, path, first_seen_at, last_seen_at)
@@ -478,7 +510,7 @@ mod tests {
             .unwrap();
             let raw = json!({
                 "type": l.role, "uuid": l.uuid, "sessionId": l.session, "timestamp": l.timestamp,
-                "cwd": l.cwd, "isSidechain": l.path.contains("subagents"),
+                "cwd": l.cwd, "sourceOrder": i, "isSidechain": l.path.contains("subagents"),
                 "message": {"role": l.role, "model": "m", "content": l.content}
             });
             conn.execute(
@@ -494,6 +526,159 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn d3_provider_and_source_order_keep_colliding_sessions_separate() {
+        let mut claude = line(
+            "/p/claude.jsonl",
+            "shared01",
+            "c",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("Claude本文"),
+        );
+        claude.kind = "claude-code/transcript";
+        let mut ai = line(
+            "/p/ai.jsonl",
+            "shared01",
+            "ai",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("claude.ai本文"),
+        );
+        ai.kind = "claude-ai/conversation";
+        let mut cowork = line(
+            "/p/cowork.jsonl",
+            "shared01",
+            "cw",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("Cowork本文"),
+        );
+        cowork.kind = "claude-cowork/transcript";
+        let mut codex_first = line(
+            "/p/z.jsonl",
+            "shared01",
+            "first",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("Codex先"),
+        );
+        codex_first.kind = "codex/conversation";
+        let mut codex_second = line(
+            "/p/a.jsonl",
+            "shared01",
+            "second",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("Codex後"),
+        );
+        codex_second.kind = "codex/conversation";
+        let path = build(&[claude, ai, cowork, codex_first, codex_second]);
+        let conn = open_read_only(&path).unwrap();
+        for (provider, uuid) in [
+            ("claude-code", "c"),
+            ("claude-ai", "ai"),
+            ("claude-cowork", "cw"),
+        ] {
+            let page = get_messages(&conn, provider, "shared01", 1, 50).unwrap();
+            assert_eq!(page.total, 1);
+            assert_eq!(page.messages[0].uuid.as_deref(), Some(uuid));
+        }
+        let page = get_messages(&conn, "codex", "shared01", 1, 1).unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.messages[0].uuid.as_deref(), Some("first"));
+        assert_eq!(
+            get_messages(&conn, "codex", "shared01", 2, 1)
+                .unwrap()
+                .messages[0]
+                .uuid
+                .as_deref(),
+            Some("second")
+        );
+        let hits = search(
+            &conn,
+            &plan_search("Codex"),
+            Some("codex"),
+            None,
+            false,
+            0,
+            10,
+        )
+        .unwrap()
+        .hits;
+        assert_eq!(
+            hits.iter().map(|h| h.index).collect::<Vec<_>>(),
+            vec![Some(2), Some(1)]
+        );
+    }
+
+    #[test]
+    fn i4_missing_cwd_filter_selects_only_unlocated_codex_sessions() {
+        let mut codex = line(
+            "/p/codex.jsonl",
+            "missing1",
+            "cx",
+            "2026-11-01T00:00:00Z",
+            "user",
+            json!("Codex語句"),
+        );
+        codex.kind = "codex/conversation";
+        let path = build(&[
+            codex,
+            line(
+                "/p/claude.jsonl",
+                "located1",
+                "cl",
+                "2026-11-01T00:00:00Z",
+                "user",
+                json!("Claude語句"),
+            ),
+        ]);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE session_summaries SET cwd = NULL WHERE provider = 'codex'",
+            [],
+        )
+        .unwrap();
+        let sessions = list_sessions(&conn, Some("codex"), None, true, 0, 10).unwrap();
+        assert_eq!(
+            sessions
+                .iter()
+                .map(|s| s.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["missing1"]
+        );
+        let hits = search(
+            &conn,
+            &plan_search("Codex"),
+            Some("codex"),
+            None,
+            true,
+            0,
+            10,
+        )
+        .unwrap()
+        .hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].session_id.as_deref(), Some("missing1"));
+        assert!(matches!(
+            list_sessions(&conn, Some("codex"), Some("/p"), true, 0, 10),
+            Err(StoreError::Settings { .. })
+        ));
+        assert!(matches!(
+            search(
+                &conn,
+                &plan_search("Codex"),
+                Some("codex"),
+                Some("/p"),
+                true,
+                0,
+                10
+            ),
+            Err(StoreError::Settings { .. })
+        ));
     }
 
     fn sample() -> PathBuf {
@@ -563,7 +748,7 @@ mod tests {
             open_read_only(&path).err(),
             Some(StoreError::OldSchema {
                 found: 1,
-                required: 6
+                required: 7
             })
         );
     }
@@ -573,18 +758,18 @@ mod tests {
         let conn = open_read_only(&sample()).unwrap();
         let ids = |v: Vec<SessionSummary>| v.into_iter().map(|s| s.session_id).collect::<Vec<_>>();
         assert_eq!(
-            ids(list_sessions(&conn, None, None, 0, 10).unwrap()),
+            ids(list_sessions(&conn, None, None, false, 0, 10).unwrap()),
             vec!["s2", "s1"]
         );
         assert_eq!(
-            ids(list_sessions(&conn, None, None, 1, 1).unwrap()),
+            ids(list_sessions(&conn, None, None, false, 1, 1).unwrap()),
             vec!["s1"]
         );
         assert_eq!(
-            ids(list_sessions(&conn, None, Some("/work/a"), 0, 10).unwrap()),
+            ids(list_sessions(&conn, None, Some("/work/a"), false, 0, 10).unwrap()),
             vec!["s1"]
         );
-        let s1 = list_sessions(&conn, None, Some("/work/a"), 0, 1)
+        let s1 = list_sessions(&conn, None, Some("/work/a"), false, 0, 1)
             .unwrap()
             .remove(0);
         assert_eq!(s1.message_count, 3);
@@ -615,7 +800,7 @@ mod tests {
     fn gets_session_messages_in_time_order() {
         // docs/adr/0016: a2 (a subagent's record at 00:00:30) comes between u1 and a1.
         let conn = open_read_only(&sample()).unwrap();
-        let messages = get_messages(&conn, "s1", 1, 1000)
+        let messages = get_messages(&conn, "claude-code", "s1", 1, 1000)
             .map(|p| p.messages)
             .unwrap();
         let uuids: Vec<_> = messages.iter().map(|m| m.uuid.clone().unwrap()).collect();
@@ -663,7 +848,7 @@ mod tests {
             ),
         ]);
         let conn = open_read_only(&path).unwrap();
-        let uuids: Vec<_> = get_messages(&conn, "s9", 1, 10)
+        let uuids: Vec<_> = get_messages(&conn, "claude-code", "s9", 1, 10)
             .unwrap()
             .messages
             .into_iter()
@@ -675,7 +860,7 @@ mod tests {
     #[test]
     fn searches_with_match_newest_first() {
         let conn = open_read_only(&sample()).unwrap();
-        let result = search(&conn, &plan_search("全文検索"), None, None, 0, 10).unwrap();
+        let result = search(&conn, &plan_search("全文検索"), None, None, false, 0, 10).unwrap();
         assert!(!result.slow);
         let uuids: Vec<_> = result
             .hits
@@ -693,7 +878,7 @@ mod tests {
     #[test]
     fn searches_short_terms_with_like() {
         let conn = open_read_only(&sample()).unwrap();
-        let result = search(&conn, &plan_search("検索"), None, None, 0, 10).unwrap();
+        let result = search(&conn, &plan_search("検索"), None, None, false, 0, 10).unwrap();
         assert!(result.slow);
         let uuids: Vec<_> = result
             .hits
@@ -707,13 +892,14 @@ mod tests {
     #[test]
     fn combines_match_and_like_and_filters_by_cwd() {
         let conn = open_read_only(&sample()).unwrap();
-        let both = search(&conn, &plan_search("全文検索 テ"), None, None, 0, 10).unwrap();
+        let both = search(&conn, &plan_search("全文検索 テ"), None, None, false, 0, 10).unwrap();
         assert_eq!(both.hits.len(), 1);
         let cwd = search(
             &conn,
             &plan_search("全文検索"),
             None,
             Some("/work/b"),
+            false,
             0,
             10,
         )
@@ -726,35 +912,35 @@ mod tests {
     fn like_wildcards_match_literally() {
         let conn = open_read_only(&sample()).unwrap();
         assert_eq!(
-            search(&conn, &plan_search("0%"), None, None, 0, 10)
+            search(&conn, &plan_search("0%"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
             1
         );
         assert_eq!(
-            search(&conn, &plan_search("e_"), None, None, 0, 10)
+            search(&conn, &plan_search("e_"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
             1
         );
         assert_eq!(
-            search(&conn, &plan_search("%"), None, None, 0, 10)
+            search(&conn, &plan_search("%"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
             1
         );
         assert_eq!(
-            search(&conn, &plan_search("_"), None, None, 0, 10)
+            search(&conn, &plan_search("_"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
             1
         );
         assert_eq!(
-            search(&conn, &plan_search("\\"), None, None, 0, 10)
+            search(&conn, &plan_search("\\"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
@@ -773,12 +959,12 @@ mod tests {
             "-全文検索",
         ] {
             assert!(
-                search(&conn, &plan_search(input), None, None, 0, 10).is_ok(),
+                search(&conn, &plan_search(input), None, None, false, 0, 10).is_ok(),
                 "{input}"
             );
         }
         assert_eq!(
-            search(&conn, &plan_search("NEAR"), None, None, 0, 10)
+            search(&conn, &plan_search("NEAR"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
@@ -834,23 +1020,23 @@ mod tests {
     #[test]
     fn shows_a_copied_record_once() {
         let conn = open_read_only(&with_copy()).unwrap();
-        let uuids: Vec<_> = get_messages(&conn, "s1", 1, 1000)
+        let uuids: Vec<_> = get_messages(&conn, "claude-code", "s1", 1, 1000)
             .map(|p| p.messages)
             .unwrap()
             .into_iter()
             .map(|m| m.uuid.unwrap())
             .collect();
         assert_eq!(uuids, vec!["u1", "a1", "u9"]);
-        let hits = search(&conn, &plan_search("全文検索"), None, None, 0, 10)
+        let hits = search(&conn, &plan_search("全文検索"), None, None, false, 0, 10)
             .unwrap()
             .hits;
         assert_eq!(hits.len(), 1);
-        let short = search(&conn, &plan_search("原本"), None, None, 0, 10)
+        let short = search(&conn, &plan_search("原本"), None, None, false, 0, 10)
             .unwrap()
             .hits;
         assert_eq!(short.len(), 1);
         assert_eq!(
-            list_sessions(&conn, None, None, 0, 1).unwrap()[0].message_count,
+            list_sessions(&conn, None, None, false, 0, 1).unwrap()[0].message_count,
             3
         );
     }
@@ -911,7 +1097,7 @@ mod tests {
         take_out(&taken, &serde_json::to_string(&long).unwrap());
         let read = |path: &PathBuf| {
             let conn = open_read_only(path).unwrap();
-            let page = get_messages(&conn, "s1", 1, 100).unwrap();
+            let page = get_messages(&conn, "claude-code", "s1", 1, 100).unwrap();
             let blocks = page
                 .messages
                 .iter()
@@ -958,7 +1144,7 @@ mod tests {
             json!([{"type": "text", "text": "短い"}, {"type": "tool_result", "content": long}]),
         )]);
         let conn = open_read_only(&path).unwrap();
-        let message = get_messages(&conn, "s1", 1, 1000)
+        let message = get_messages(&conn, "claude-code", "s1", 1, 1000)
             .map(|p| p.messages)
             .unwrap()
             .remove(0);
@@ -1040,19 +1226,25 @@ mod tests {
         let conn = open_read_only(&with_providers()).unwrap();
         let ids = |v: Vec<SessionSummary>| v.into_iter().map(|s| s.session_id).collect::<Vec<_>>();
         assert_eq!(
-            ids(list_sessions(&conn, Some("claude-ai"), None, 0, 10).unwrap()),
+            ids(list_sessions(&conn, Some("claude-ai"), None, false, 0, 10).unwrap()),
             vec!["c1"]
         );
         assert_eq!(
-            ids(list_sessions(&conn, Some("claude-code"), Some("/work/a"), 0, 10).unwrap()),
+            ids(list_sessions(&conn, Some("claude-code"), Some("/work/a"), false, 0, 10).unwrap()),
             vec!["s1"]
         );
-        assert_eq!(list_sessions(&conn, None, None, 0, 10).unwrap().len(), 3);
+        assert_eq!(
+            list_sessions(&conn, None, None, false, 0, 10)
+                .unwrap()
+                .len(),
+            3
+        );
         let hits = search(
             &conn,
             &plan_search("全文検索"),
             Some("claude-cowork"),
             None,
+            false,
             0,
             10,
         )
@@ -1061,7 +1253,7 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].provider, "claude-cowork");
         assert_eq!(
-            search(&conn, &plan_search("全文検索"), None, None, 0, 10)
+            search(&conn, &plan_search("全文検索"), None, None, false, 0, 10)
                 .unwrap()
                 .hits
                 .len(),
@@ -1072,7 +1264,7 @@ mod tests {
     #[test]
     fn reads_claude_ai_conversations() {
         let conn = open_read_only(&with_providers()).unwrap();
-        let messages = get_messages(&conn, "c1", 1, 1000)
+        let messages = get_messages(&conn, "claude-ai", "c1", 1, 1000)
             .map(|p| p.messages)
             .unwrap();
         assert_eq!(messages.len(), 1);
@@ -1089,7 +1281,7 @@ mod tests {
     #[test]
     fn pages_messages_with_numbers_and_the_total() {
         let conn = open_read_only(&sample()).unwrap();
-        let page = get_messages(&conn, "s1", 2, 1).unwrap();
+        let page = get_messages(&conn, "claude-code", "s1", 2, 1).unwrap();
         assert_eq!(page.total, 3);
         let picked: Vec<_> = page
             .messages
@@ -1097,19 +1289,19 @@ mod tests {
             .map(|m| (m.index, m.uuid.clone().unwrap()))
             .collect();
         assert_eq!(picked, vec![(2, "a2".to_string())]);
-        let rest = get_messages(&conn, "s1", 3, 10).unwrap();
+        let rest = get_messages(&conn, "claude-code", "s1", 3, 10).unwrap();
         assert_eq!(
             rest.messages.iter().map(|m| m.index).collect::<Vec<_>>(),
             vec![3]
         );
-        let beyond = get_messages(&conn, "s1", 5, 10).unwrap();
+        let beyond = get_messages(&conn, "claude-code", "s1", 5, 10).unwrap();
         assert_eq!((beyond.total, beyond.messages.len()), (3, 0));
     }
 
     #[test]
     fn copies_do_not_take_numbers() {
         let conn = open_read_only(&with_copy()).unwrap();
-        let page = get_messages(&conn, "s1", 1, 100).unwrap();
+        let page = get_messages(&conn, "claude-code", "s1", 1, 100).unwrap();
         assert_eq!(page.total, 3);
         let numbered: Vec<_> = page
             .messages
@@ -1125,7 +1317,7 @@ mod tests {
     #[test]
     fn search_hits_carry_the_message_number() {
         let conn = open_read_only(&sample()).unwrap();
-        let hits = search(&conn, &plan_search("検索"), None, None, 0, 10)
+        let hits = search(&conn, &plan_search("検索"), None, None, false, 0, 10)
             .unwrap()
             .hits;
         let numbered: Vec<_> = hits
@@ -1141,7 +1333,7 @@ mod tests {
             ]
         );
         let copy = open_read_only(&with_copy()).unwrap();
-        let hit = search(&copy, &plan_search("原本"), None, None, 0, 10)
+        let hit = search(&copy, &plan_search("原本"), None, None, false, 0, 10)
             .unwrap()
             .hits
             .remove(0);
@@ -1202,11 +1394,11 @@ mod tests {
             ),
         ]);
         let conn = open_read_only(&path).unwrap();
-        let hits = search(&conn, &plan_search("番号の確認"), None, None, 0, 10)
+        let hits = search(&conn, &plan_search("番号の確認"), None, None, false, 0, 10)
             .unwrap()
             .hits;
         let numbers = |session: &str| -> Vec<(String, usize)> {
-            get_messages(&conn, session, 1, 100)
+            get_messages(&conn, "claude-code", session, 1, 100)
                 .unwrap()
                 .messages
                 .into_iter()
@@ -1244,7 +1436,7 @@ mod tests {
     fn empty_input_has_no_hits() {
         let conn = open_read_only(&sample()).unwrap();
         assert_eq!(
-            search(&conn, &plan_search("  "), None, None, 0, 10).unwrap(),
+            search(&conn, &plan_search("  "), None, None, false, 0, 10).unwrap(),
             SearchResult {
                 hits: vec![],
                 slow: false

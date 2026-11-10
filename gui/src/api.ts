@@ -38,6 +38,8 @@ export type Message = {
   role: string | null;
   model: string | null;
   is_sidechain: boolean;
+  original_id: string | null;
+  version: string | null;
   blocks: Block[];
 };
 
@@ -57,14 +59,14 @@ export type SearchResult = { hits: SearchHit[]; slow: boolean };
 export const status = () => invoke<Status>("status");
 export const listProjects = () => invoke<Project[]>("list_projects");
 export const listSessions = (filter: Filter | null, offset: number, limit: number) =>
-  invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });
+  invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, offset, limit });
 // docs/adr/0014
 export type MessagePage = { total: number; messages: Message[] };
-export const getMessages = (sessionId: string, from: number, limit: number) =>
-  invoke<MessagePage>("get_messages", { sessionId, from, limit });
+export const getMessages = (provider: string, sessionId: string, from: number, limit: number) =>
+  invoke<MessagePage>("get_messages", { provider, sessionId, from, limit });
 export const getBlock = (rowid: number, index: number) => invoke<Block>("get_block", { rowid, index });
 export const search = (query: string, filter: Filter | null, offset: number, limit: number) =>
-  invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, offset, limit });
+  invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, offset, limit });
 
 // docs/adr/0007: settings and setup
 export type Origin = "environment" | "env_file" | "config_file" | "default";
@@ -98,7 +100,7 @@ export const checkEnvironment = () => invoke<EnvironmentCheck>("check_environmen
 export const runSync = () => invoke<RunResult>("run_sync");
 export const importClaudeAiExport = (zip: string) => invoke<RunResult>("import_claude_ai_export", { zip });
 // docs/adr/0026: output is the destination on success, the tail of stderr otherwise.
-export const exportSession = (sessionId: string, path: string) => invoke<RunResult>("export_session", { sessionId, path });
+export const exportSession = (provider: string, sessionId: string, path: string) => invoke<RunResult>("export_session", { provider, sessionId, path });
 
 // docs/adr/0010
 export type { ScanResult } from "./scan.ts";

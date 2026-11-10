@@ -17,8 +17,9 @@ import {
   sessionIds,
   sessionMessages,
   sessionSummary,
+  type SessionKey,
 } from "../chat-log/store.ts";
-import { matchSession, parseTime } from "../chat-log/values.ts";
+import { MIN_PREFIX, parseTime } from "../chat-log/values.ts";
 import { loadEnvFile } from "../env.ts";
 import { defaultDatabasePath } from "../paths.ts";
 
@@ -60,7 +61,7 @@ const count = (value: string | undefined, name: string, fallback: number): numbe
   return Number(value);
 };
 
-const EXPORT_REJECTS = ["provider", "cwd", "since", "until", "limit", "offset", "max-chars", "json"] as const;
+const EXPORT_REJECTS = ["cwd", "since", "until", "limit", "offset", "max-chars", "json"] as const;
 
 const main = (argv: string[]): string => {
   const { values: v, positionals } = parse(argv);
@@ -83,12 +84,14 @@ const main = (argv: string[]): string => {
   const db = openReadOnly(defaultDatabasePath(process.env));
   const offset = count(v.offset, "offset", 0);
   // A session ID or a unique prefix of it.
-  const sessionOf = (prefix: string): string => {
-    const match = matchSession(prefix, sessionIds(db, prefix));
-    if (match.kind === "short") usage("セッションIDは先頭8文字以上で指定する");
-    if (match.kind === "none") throw exitError(1, `セッションが見つかりません: ${prefix}`);
-    if (match.kind === "ambiguous") throw exitError(1, `セッションIDが区別できません: ${prefix}\n候補:\n${match.ids.join("\n")}`);
-    return match.kind === "found" ? match.id : "";
+  const sessionOf = (prefix: string): SessionKey => {
+    if (prefix.length < MIN_PREFIX) usage("セッションIDは先頭8文字以上で指定する");
+    const candidates = sessionIds(db, prefix, v.provider);
+    const exact = candidates.filter((c) => c.session_id === prefix);
+    const matches = exact.length > 0 ? exact : candidates;
+    if (matches.length === 0) throw exitError(1, `セッションが見つかりません: ${prefix}`);
+    if (matches.length > 1) throw exitError(2, `セッションIDが区別できません: ${prefix}\n候補:\n${matches.map((c) => `${c.provider}\t${c.session_id}`).join("\n")}\n--provider <提供元> で絞ってください。`);
+    return matches[0] as SessionKey;
   };
 
   switch (command) {
@@ -106,10 +109,10 @@ const main = (argv: string[]): string => {
       // docs/adr/0018: --around reads a few messages around a hit unless --limit says otherwise.
       const limit = count(v.limit, "limit", v.around !== undefined ? 10 : 50);
       const maxChars = count(v["max-chars"], "max-chars", 2000);
-      const total = messageCount(db, id);
+      const total = messageCount(db, id.provider, id.session_id);
       const from = v.around !== undefined ? Math.max(1, count(v.around, "around", 1) - Math.floor(limit / 2)) : offset + 1;
       const to = from + limit - 1;
-      const messages = sessionMessages(db, id, from, to);
+      const messages = sessionMessages(db, id.provider, id.session_id, from, to);
       if (v.json) return jsonLines(messages.map((m) => messageJson(m, maxChars)));
       const center = v.around !== undefined ? count(v.around, "around", 1) : null;
       return messagesText(messages, { thinking: v.thinking, tools: v.tools, maxChars }, { from, to, total, center, previous: center !== null });
@@ -119,17 +122,17 @@ const main = (argv: string[]): string => {
       const id = sessionOf(rest[0] ?? usage("export にはセッションIDを指定する"));
       const rejected = EXPORT_REJECTS.filter((name) => v[name] !== undefined && v[name] !== false);
       if (rejected.length > 0) usage(`export には ${rejected.map((n) => `--${n}`).join("、")} を付けられない`);
-      const session = sessionSummary(db, id);
-      if (session === null) throw exitError(1, `セッションが見つかりません: ${id}`);
-      return sessionMarkdown(session, sessionMessages(db, id, 1, messageCount(db, id)));
+      const session = sessionSummary(db, id.provider, id.session_id);
+      if (session === null) throw exitError(1, `セッションが見つかりません: ${id.session_id}`);
+      return sessionMarkdown(session, sessionMessages(db, id.provider, id.session_id, 1, messageCount(db, id.provider, id.session_id)));
     }
     case "context": {
       const cwd = v.all ? undefined : (v.cwd ?? process.cwd());
       const maxChars = count(v["max-chars"], "max-chars", 500);
       const wanted = count(v.messages, "messages", 4);
       const entries = listSessions(db, filter(cwd), count(v.limit, "limit", 5), offset).map((session) => {
-        const total = messageCount(db, session.session_id);
-        const recent = sessionMessages(db, session.session_id, Math.max(1, total - Math.max(wanted * 5, 20) + 1), total);
+        const total = messageCount(db, session.provider, session.session_id);
+        const recent = sessionMessages(db, session.provider, session.session_id, Math.max(1, total - Math.max(wanted * 5, 20) + 1), total);
         const withText = recent.filter((m) => plainText(m) !== "");
         return { session, last: wanted === 0 ? [] : withText.slice(-wanted) };
       });

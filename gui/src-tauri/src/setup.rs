@@ -70,6 +70,7 @@ pub fn scan_command(settings: &[Setting], path: Option<&str>) -> Result<CommandS
 pub fn export_command(
     settings: &[Setting],
     path: Option<&str>,
+    provider: &str,
     session_id: &str,
 ) -> Result<CommandSpec, String> {
     let bun = required(settings, settings::BUN, "bun")?;
@@ -83,6 +84,8 @@ pub fn export_command(
                 .into_owned(),
             "export".to_owned(),
             session_id.to_owned(),
+            "--provider".to_owned(),
+            provider.to_owned(),
         ],
         env: command_env(settings, Path::new(bun), path),
     })
@@ -275,6 +278,8 @@ mod tests {
             setting(settings::DESKTOP_DIR, "/h/desk"),
             setting(settings::CLAUDE_AI_DIR, "/d/claude-ai"),
             setting(settings::CLAUDE_AI_INBOX, "/h/Downloads"),
+            setting(settings::CODEX_DIR, "/h/.codex"),
+            setting(settings::CODEX_STORE, "/d/codex"),
             setting(settings::REPO, "/repo"),
             setting(settings::BUN, "/tools/bin/bun"),
         ]
@@ -316,6 +321,8 @@ mod tests {
                     settings::CLAUDE_AI_INBOX.to_string(),
                     "/h/Downloads".to_string()
                 ),
+                (settings::CODEX_DIR.to_string(), "/h/.codex".to_string()),
+                (settings::CODEX_STORE.to_string(), "/d/codex".to_string()),
             ]
         );
     }
@@ -337,11 +344,18 @@ mod tests {
     // docs/adr/0026
     #[test]
     fn builds_the_export_command() {
-        let spec = export_command(&sample(), Some("/usr/bin"), "aaaaaaaa-1111").unwrap();
+        let spec =
+            export_command(&sample(), Some("/usr/bin"), "claude-code", "aaaaaaaa-1111").unwrap();
         assert_eq!(spec.program, PathBuf::from("/tools/bin/bun"));
         assert_eq!(
             spec.args,
-            vec!["/repo/src/cli/chat-log.ts", "export", "aaaaaaaa-1111"]
+            vec![
+                "/repo/src/cli/chat-log.ts",
+                "export",
+                "aaaaaaaa-1111",
+                "--provider",
+                "claude-code"
+            ]
         );
         assert_eq!(
             spec.env,
@@ -351,7 +365,7 @@ mod tests {
             .into_iter()
             .filter(|s| s.key != settings::BUN)
             .collect();
-        assert!(export_command(&no_bun, None, "x").is_err());
+        assert!(export_command(&no_bun, None, "claude-code", "x").is_err());
     }
 
     #[test]
@@ -409,6 +423,45 @@ mod tests {
                 (settings::DESKTOP_DIR.to_string(), PathKind::Missing),
             ]
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn i4_checking_codex_paths_does_not_change_files() {
+        let dir =
+            std::env::temp_dir().join(format!("ai-chat-logs-codex-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.jsonl");
+        let config = dir.join("config.env");
+        let db = dir.join("logs.sqlite");
+        std::fs::write(&input, b"codex rollout").unwrap();
+        std::fs::write(&config, b"AI_CHAT_LOGS_CODEX_DIR=/codex").unwrap();
+        std::fs::write(&db, b"database").unwrap();
+        let before = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>();
+        let s = vec![
+            setting(settings::CODEX_DIR, dir.to_str().unwrap()),
+            setting(settings::CODEX_STORE, dir.join("absent").to_str().unwrap()),
+            setting(settings::DB, db.to_str().unwrap()),
+        ];
+        let checked = check_paths(&s);
+        assert_eq!(
+            checked.iter().map(|c| &c.kind).collect::<Vec<_>>(),
+            [&PathKind::Directory, &PathKind::Missing, &PathKind::File]
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), b"codex rollout");
+        assert_eq!(
+            std::fs::read(&config).unwrap(),
+            b"AI_CHAT_LOGS_CODEX_DIR=/codex"
+        );
+        assert_eq!(std::fs::read(&db).unwrap(), b"database");
+        let after = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

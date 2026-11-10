@@ -47,7 +47,8 @@ const messageMarkdown = (m: Message): string | null => {
   const body = m.blocks.map(blockMarkdown).filter((t): t is string => t !== null);
   if (body.length === 0) return null;
   const head = [`## #${m.index}`, m.role ?? "?", m.timestamp ?? "", ...(m.model ? [m.model] : []), ...(m.is_sidechain ? ["(サブエージェント)"] : [])].join(" ");
-  return [head, ...body].join("\n\n");
+  const origin = [m.original_id ? `- 元ID: ${m.original_id}` : null, m.version ? `- 版: ${m.version}` : null].filter((v): v is string => v !== null);
+  return [head, ...origin, ...body].join("\n\n");
 };
 
 export const sessionMarkdown = (s: Session, messages: readonly Message[]): string => {

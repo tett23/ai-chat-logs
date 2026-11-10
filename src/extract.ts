@@ -40,6 +40,8 @@ const EXTRACTORS: Record<LineKind, (record: JsonObject) => Fields> = {
   "claude-code/transcript": transcript,
   "claude-cowork/transcript": transcript,
   "claude-ai/conversation": transcript,
+  "codex/conversation": transcript,
+  "codex/rollout": (r) => ({ type: str(r.type), uuid: null, sessionId: null, timestamp: str(r.timestamp) }),
   "claude-cowork/audit": (r) => ({
     type: str(r.type),
     uuid: str(r.uuid),

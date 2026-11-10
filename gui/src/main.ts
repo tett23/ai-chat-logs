@@ -6,6 +6,7 @@ import { clear, h } from "./dom.ts";
 import { exportFileName } from "./export.ts";
 import { splitFences } from "./fences.ts";
 import { highlightParts, searchTerms } from "./highlight.ts";
+import { importGate } from "./import-gate.ts";
 import { initialRange, newerRange, newestFirst, olderRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
@@ -25,7 +26,7 @@ const state = {
   done: false,
   loading: false,
   generation: 0, // bumps whenever the list is reset, so stale pages are dropped
-  selected: null as string | null,
+  selected: null as { provider: string; sessionId: string } | null,
 };
 
 // Layout
@@ -201,6 +202,8 @@ const messageNode = (message: api.Message): HTMLElement => {
     h("span", { class: isUser ? "font-semibold text-blue-700" : "font-semibold text-emerald-700" }, [message.role ?? "?"]),
     message.model ? h("span", {}, [message.model]) : null,
     h("span", {}, [formatTime(message.timestamp)]),
+    message.original_id ? h("span", { class: "break-all" }, [`元ID: ${message.original_id}`]) : null,
+    message.version ? h("span", {}, [`版: ${message.version}`]) : null,
   ]);
   const body = () => message.blocks.map((block, i) => blockNode(block, message.rowid, i));
   const content = message.is_sidechain ? [folded("サブエージェント", () => [header, ...body()])] : [header, ...body()];
@@ -268,6 +271,7 @@ applyShownToView();
 // older messages are added below, newer ones above.
 const NEAR_EDGE_PX = 600;
 const conversation = {
+  provider: null as string | null,
   sessionId: null as string | null,
   title: null as string | null,
   generation: 0, // bumps when another session is opened, so stale pages are dropped
@@ -301,7 +305,7 @@ exportButton.addEventListener("click", () => {
     exportButton.disabled = true;
     exportStatus.textContent = "書き出し中…";
     try {
-      const result = await api.exportSession(sessionId, path);
+      const result = await api.exportSession(conversation.provider as string, sessionId, path);
       exportStatus.textContent = result.exit_code === 0 ? `書き出しました: ${path}` : `失敗しました（終了コード ${result.exit_code ?? "なし"}）\n${result.output}`;
     } catch (e) {
       exportStatus.textContent = String(typeof e === "object" && e !== null && "kind" in e ? errorText(e as api.StoreError) : e);
@@ -312,6 +316,7 @@ exportButton.addEventListener("click", () => {
 });
 const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90 py-1" }, [
   h("div", { class: "flex items-center justify-between gap-4 whitespace-nowrap" }, [
+    h("span", { class: "text-xs font-medium text-gray-600", attrs: { id: "conversation-provider" } }),
     statusText,
     h("div", { class: "flex items-center gap-3" }, [exportButton, shownMenu]),
   ]),
@@ -321,7 +326,7 @@ const refreshStatus = (): void => clear(statusText, pageStatus());
 
 const loadRange = async (range: Range): Promise<api.MessagePage | null> => {
   const generation = conversation.generation;
-  const page = await api.getMessages(conversation.sessionId as string, range.from, range.to - range.from + 1);
+  const page = await api.getMessages(conversation.provider as string, conversation.sessionId as string, range.from, range.to - range.from + 1);
   return generation === conversation.generation ? page : null;
 };
 
@@ -383,6 +388,7 @@ view.addEventListener("scroll", () => {
 
 // `knownTotal` is the message count of the session list (docs/adr/0016); a search hit gives `target`.
 const openSession = async (
+  provider: string,
   sessionId: string,
   title: string | null,
   target: number | null,
@@ -390,9 +396,11 @@ const openSession = async (
   knownTotal: number | null,
   terms: readonly string[],
 ): Promise<void> => {
-  state.selected = sessionId;
+  state.selected = { provider, sessionId };
   conversation.generation += 1;
+  conversation.provider = provider;
   conversation.sessionId = sessionId;
+  (statusBox.querySelector("#conversation-provider") as HTMLElement).textContent = providerLabel(provider);
   conversation.title = title;
   highlightTerms = terms;
   exportButton.disabled = false;
@@ -444,11 +452,11 @@ const openSession = async (
 };
 
 // List
-const providerBadge = (provider: string): Node | null =>
-  provider === "claude-code" ? null : h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
+const providerBadge = (provider: string): Node =>
+  h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
 
 const sessionItem = (s: api.SessionSummary): Node =>
-  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.session_id, s.title, null, null, s.message_count, []) } }, [
+  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.provider, s.session_id, s.title, null, null, s.message_count, []) } }, [
     h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
     h("div", { class: "flex justify-between text-xs text-gray-500" }, [
       h("span", {}, [formatTime(s.last_at)]),
@@ -467,7 +475,7 @@ const hitItem = (hit: api.SearchHit): Node =>
   h(
     "li",
     { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => hit.session_id &&
-          openSession(hit.session_id, hit.title, hit.index, hit.uuid, null, state.mode.kind === "search" ? searchTerms(state.mode.query) : []) } },
+          openSession(hit.provider, hit.session_id, hit.title, hit.index, hit.uuid, null, state.mode.kind === "search" ? searchTerms(state.mode.query) : []) } },
     [
       h("div", { class: "truncate text-xs font-medium" }, [providerBadge(hit.provider), hit.title ?? hit.session_id ?? ""]),
       h("div", { class: "text-xs text-gray-500" }, [`${hit.role ?? ""} ${formatTime(hit.timestamp)}`]),
@@ -572,12 +580,14 @@ const showInbox = (): void => {
 };
 
 scanButton.addEventListener("click", () => {
-  scanButton.disabled = true;
+  if (importGate.running()) return;
   scanStatus.textContent = "取り込み中…";
   scanDetails.classList.add("hidden");
-  api
-    .scanClaudeAiExports()
-    .then(async (r) => {
+  importGate
+    .run(api.scanClaudeAiExports)
+    .then(async (result) => {
+      if (!result.started) return;
+      const r = result.value;
       scanStatus.textContent = scanMessage(r);
       (scanDetails.querySelector("pre") as HTMLElement).textContent = [...r.imported, r.output].filter((t) => t !== "").join("\n");
       scanDetails.classList.remove("hidden");
@@ -587,10 +597,8 @@ scanButton.addEventListener("click", () => {
     .catch((e) => {
       scanStatus.textContent = typeof e === "object" && e !== null && "kind" in e ? errorText(e as api.StoreError) : String(e);
     })
-    .finally(() => {
-      scanButton.disabled = false;
-    });
 });
+importGate.subscribe((running) => { scanButton.disabled = running; });
 
 const start = async (): Promise<void> => {
   const s = await api.status();

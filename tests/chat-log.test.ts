@@ -216,11 +216,11 @@ describe("chat-log show", () => {
     expect(around.map((l) => l.split(" ")[1])).toEqual(["#48", "#49", "#50", "#51"]);
   });
 
-  test("unknown and ambiguous sessions exit 1", () => {
+  test("unknown sessions exit 1 and ambiguous sessions exit 2", () => {
     const missing = chatLog(["show", "99999999"]);
     expect(missing.code).toBe(1);
     const ambiguous = chatLog(["show", "ffffffff"]);
-    expect(ambiguous.code).toBe(1);
+    expect(ambiguous.code).toBe(2);
     expect(ambiguous.err).toContain("ffffffff-0001");
     expect(ambiguous.err).toContain("ffffffff-0002");
   });

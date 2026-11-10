@@ -5,6 +5,8 @@ export const LINE_KINDS = [
   "claude-cowork/transcript",
   "claude-cowork/audit",
   "claude-ai/conversation",
+  "codex/rollout",
+  "codex/conversation",
 ] as const;
 export const FILE_KINDS = ["claude-code/file", "claude-desktop/session", "claude-cowork/file", "claude-cowork/session", "claude-ai/export"] as const;
 

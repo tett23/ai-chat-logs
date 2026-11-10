@@ -6,7 +6,7 @@ import { restoredRaw } from "../payloads.ts";
 import { makeSnippet, type SearchPlan } from "./search.ts";
 
 // docs/adr/0021: record_tool_texts; docs/adr/0031: payloads.
-export const REQUIRED_SCHEMA_VERSION = 6;
+export const REQUIRED_SCHEMA_VERSION = 7;
 
 // Errors that end chat-log with exit code 2 (usage, database, settings), and with 1 (no such session).
 export type ExitError = Error & { exitCode: 1 | 2 };
@@ -64,18 +64,18 @@ export const listSessions = (db: Database, f: Filter, limit: number, offset: num
 };
 
 // docs/adr/0026: the summary of one session, for the head of an export.
-export const sessionSummary = (db: Database, sessionId: string): Session | null =>
+export const sessionSummary = (db: Database, provider: string, sessionId: string): Session | null =>
   db
-    .query<Session, [string]>(
-      "SELECT provider, session_id, title, cwd, first_at, last_at, message_count FROM session_summaries WHERE session_id = ? ORDER BY provider LIMIT 1",
+    .query<Session, [string, string]>(
+      "SELECT provider, session_id, title, cwd, first_at, last_at, message_count FROM session_summaries WHERE provider = ? AND session_id = ?",
     )
-    .get(sessionId);
+    .get(provider, sessionId);
 
-export const sessionIds = (db: Database, prefix: string): string[] =>
+export type SessionKey = { provider: string; session_id: string };
+export const sessionIds = (db: Database, prefix: string, provider?: string): SessionKey[] =>
   db
-    .query<{ id: string }, [string]>("SELECT DISTINCT session_id id FROM session_summaries WHERE session_id LIKE ? ESCAPE '\\'")
-    .all(`${escapeLike(prefix)}%`)
-    .map((r) => r.id);
+    .query<SessionKey, [string, string | null, string | null]>("SELECT provider, session_id FROM session_summaries WHERE session_id LIKE ? ESCAPE '\\' AND (? IS NULL OR provider = ?) ORDER BY provider, session_id")
+    .all(`${escapeLike(prefix)}%`, provider ?? null, provider ?? null);
 
 export type Message = {
   index: number;
@@ -84,6 +84,8 @@ export type Message = {
   role: string | null;
   model: string | null;
   is_sidechain: boolean;
+  original_id: string | null;
+  version: string | null;
   blocks: Block[];
 };
 
@@ -103,26 +105,35 @@ const toMessage = (row: { idx: number; uuid: string | null; timestamp: string | 
     role: typeof message.role === "string" ? message.role : null,
     model: typeof message.model === "string" ? message.model : null,
     is_sidechain: value.isSidechain === true,
+    original_id: typeof (value.openai as Record<string, unknown> | undefined)?.itemId === "string" ? (value.openai as Record<string, string>).itemId : null,
+    version: typeof (value.openai as Record<string, unknown> | undefined)?.version === "string" ? (value.openai as Record<string, string>).version : null,
     blocks: toBlocks(message.content),
   };
 };
 
-export const messageCount = (db: Database, sessionId: string): number =>
-  db.query<{ n: number }, [string]>("SELECT count(*) n FROM session_messages WHERE session_id = ?").get(sessionId)?.n ?? 0;
+export const messageCount = (db: Database, provider: string, sessionId: string): number =>
+  db.query<{ n: number }, [string, string]>("SELECT count(*) n FROM session_messages WHERE provider = ? AND session_id = ?").get(provider, sessionId)?.n ?? 0;
+
+// Codex snapshots may be stored at different paths. Their original physical order wins ties in time.
+const messageOrder = `coalesce(timestamp, ''),
+  CASE WHEN provider = 'codex' THEN CAST(raw ->> '$.sourceOrder' AS INTEGER) END,
+  CASE WHEN provider = 'codex' THEN coalesce(raw ->> '$.uuid', '') ELSE path END,
+  CASE WHEN provider = 'codex' THEN '' ELSE generation END,
+  CASE WHEN provider = 'codex' THEN 0 ELSE line_no END`;
 
 // Messages numbered from 1 in file and line order without copies, in [from, to].
 // docs/adr/0031: raw is restored from payloads before it is read.
-export const sessionMessages = (db: Database, sessionId: string, from: number, to: number): Message[] => {
+export const sessionMessages = (db: Database, provider: string, sessionId: string, from: number, to: number): Message[] => {
   const restore = restoredRaw(db);
   return db
-    .query<{ idx: number; uuid: string | null; timestamp: string | null; raw: string; payload_state: number | null }, [string, number, number]>(
+    .query<{ idx: number; uuid: string | null; timestamp: string | null; raw: string; payload_state: number | null }, [string, string, number, number]>(
       `SELECT x.idx, r.uuid, r.timestamp, r.raw, r.payload_state
-       FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) AS idx
-             FROM session_messages WHERE session_id = ?) x
+       FROM (SELECT record_rowid, row_number() OVER (ORDER BY ${messageOrder}) AS idx
+             FROM session_messages WHERE provider = ? AND session_id = ?) x
        JOIN records r ON r.rowid = x.record_rowid
        WHERE x.idx BETWEEN ? AND ? ORDER BY x.idx`,
     )
-    .all(sessionId, from, to)
+    .all(provider, sessionId, from, to)
     .map((row) => toMessage({ ...row, raw: restore(row.raw, row.payload_state) }));
 };
 
@@ -164,7 +175,7 @@ const SNIPPET_CONTEXT = 32;
 const indexesOf = (db: Database, rows: readonly { provider: string; session_id: string | null; rid: number }[]): Map<number, number> => {
   const query = db.query<{ record_rowid: number; n: number }, [string, string, string]>(
     `SELECT record_rowid, n FROM (
-       SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''), path, generation, line_no) n
+       SELECT record_rowid, row_number() OVER (ORDER BY ${messageOrder}) n
        FROM session_messages WHERE provider = ? AND session_id = ?)
      WHERE record_rowid IN (SELECT value FROM json_each(?))`,
   );

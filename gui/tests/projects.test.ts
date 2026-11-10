@@ -26,4 +26,23 @@ describe("providerLabel", () => {
     expect(providerLabel("claude-code")).toBe("Claude Code");
     expect(providerLabel("other")).toBe("other");
   });
+  test("I1 names Codex and keeps the three Claude sources distinct", () => {
+    expect(["claude-code", "claude-ai", "claude-cowork", "codex"].map(providerLabel)).toEqual([
+      "Claude Code", "claude.ai", "Cowork", "Codex",
+    ]);
+  });
+});
+
+test("I2 lists Codex projects by cwd and keeps missing cwd selectable", () => {
+  expect(projectOptions([
+    { provider: "claude-code", cwd: "/work", session_count: 1 },
+    { provider: "codex", cwd: "/work", session_count: 2 },
+    { provider: "codex", cwd: null, session_count: 3 },
+    { provider: "codex", cwd: "/other", session_count: 4 },
+  ])).toEqual([
+    { label: "/work（1）", filter: { provider: "claude-code", cwd: "/work" } },
+    { label: "Codex / /work（2）", filter: { provider: "codex", cwd: "/work" } },
+    { label: "Codex / 作業ディレクトリなし（3）", filter: { provider: "codex", cwd: null, cwd_missing: true } },
+    { label: "Codex / /other（4）", filter: { provider: "codex", cwd: "/other" } },
+  ]);
 });
