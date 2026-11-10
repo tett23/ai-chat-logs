@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, readFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { convertCodexLines } from "../src/codex.ts";
-import { convertCodexLogs, listCodexSources } from "../src/codex-store.ts";
+import { convertCodexLogs, listCodexSources, readCodexSnapshot } from "../src/codex-store.ts";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 const meta = (id = "owner", cwd: string | null = "/repo") => ({ type: "session_meta", payload: { id, session_id: "parent", cwd } });
@@ -61,6 +61,14 @@ describe("Codex conversion", () => {
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.messages).toContain("kept");
   });
+
+  test("P3 preserves channel and uses only normal user text for the title", () => {
+    const encrypted = { type: "response_item", payload: { type: "message", id: "e", role: "user", content: [{ type: "encrypted_content", encrypted_content: "secret" }] } };
+    const ordinary = { ...response("u", "visible title", "user"), payload: { ...response("u", "visible title", "user").payload, channel: "commentary", phase: "final" } };
+    const result = lines(convertCodexLines([meta(), encrypted, ordinary].map(JSON.stringify)).messages);
+    expect(result[0]?.customTitle).toBe("visible title");
+    expect((result[2]?.openai as Record<string, unknown>)?.channel).toBe("commentary");
+  });
 });
 
 describe("Codex snapshot storage", () => {
@@ -109,6 +117,36 @@ describe("Codex snapshot storage", () => {
     expect(convertCodexLogs(codex, store).published).toBe(0);
   });
 
+  test("P1 P6 accepts an append after its first read but rejects changes to captured bytes", () => {
+    const root = tempDir(), path = writeFile(join(root, "one.jsonl"), jsonl(meta()));
+    const original = readFileSync(path);
+    const captured = readCodexSnapshot(path, () => appendFileSync(path, jsonl(response("new", "later"))));
+    expect(captured.equals(original)).toBe(true);
+    expect(() => readCodexSnapshot(path, () => writeFileSync(path, jsonl(meta("changed"))))).toThrow();
+  });
+
+  test("P6 parallel conversion publishes one complete directory", async () => {
+    const root = tempDir(), codex = join(root, "codex"), store = join(root, "store");
+    writeFile(join(codex, "sessions/one.jsonl"), jsonl(meta(), response("m1", "same")));
+    const env = isolatedEnv({ HOME: root, AI_CHAT_LOGS_CODEX_DIR: codex, AI_CHAT_LOGS_CODEX_STORE: store });
+    const commands = [0, 1].map(() => Bun.spawn([join(repoRoot, "src/cli/codex-log-convert.ts")], { env, stdout: "pipe", stderr: "pipe" }));
+    expect(await Promise.all(commands.map((p) => p.exited))).toEqual([0, 0]);
+    expect(readdirSync(store).filter((name) => /^[a-f0-9]{64}$/.test(name))).toHaveLength(1);
+    expect(listCodexSources(store)).toHaveLength(2);
+  });
+
+  test("P6 each staging write failure leaves no published or partial directory", () => {
+    for (const step of ["rollout.jsonl", "messages-v1.jsonl", "manifest-v1.json"]) {
+      const root = tempDir(), codex = join(root, "codex"), store = join(root, "store");
+      writeFile(join(codex, "sessions/one.jsonl"), jsonl(meta(), response("m1", "same")));
+      const result = convertCodexLogs(codex, store, (name) => { if (name === step) throw new Error("injected write failure"); });
+      expect(result.status).toBe(1);
+      expect(result.published).toBe(0);
+      expect(listCodexSources(store)).toEqual([]);
+      expect(readdirSync(store)).toEqual([]);
+    }
+  });
+
   test("P7 reports a bad source while publishing the good source", () => {
     const root = tempDir(), store = join(root, "store"), codex = join(root, "codex");
     writeFile(join(codex, "sessions/good.jsonl"), jsonl(meta("good"), response("m1", "ok")));
@@ -139,4 +177,11 @@ test("P7 codex-log-sources prints kinds and codex-log-convert reports partial fa
   const listed = Bun.spawnSync([join(repoRoot, "src/cli/codex-log-sources.ts")], { env });
   expect(listed.exitCode).toBe(0);
   expect(listed.stdout.toString().split("\n").filter(Boolean)).toHaveLength(4);
+});
+
+test("P7 Codex CLIs reject unexpected arguments with status 2", () => {
+  const env = isolatedEnv({ HOME: tempDir() });
+  for (const name of ["codex-log-convert", "codex-log-sources"]) {
+    expect(Bun.spawnSync([join(repoRoot, `src/cli/${name}.ts`), "unexpected"], { env }).exitCode).toBe(2);
+  }
 });

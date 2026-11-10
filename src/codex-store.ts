@@ -26,7 +26,7 @@ const walk = (directory: string): string[] => {
   }
 };
 
-const snapshot = (path: string): Buffer => {
+export const readCodexSnapshot = (path: string, afterFirstRead: () => void = () => {}): Buffer => {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const before = fstatSync(fd);
@@ -34,8 +34,10 @@ const snapshot = (path: string): Buffer => {
     const all = readFileSync(fd);
     const end = all.lastIndexOf(10) + 1;
     const fixed = all.subarray(0, end);
+    afterFirstRead();
     const after = fstatSync(fd);
-    if (after.size < fixed.length) throw new Error("source changed while reading");
+    if (after.size < before.size || after.size < fixed.length
+      || (after.size === before.size && after.mtimeMs !== before.mtimeMs)) throw new Error("source changed while reading");
     // A second read of the captured range detects edits even when metadata was restored.
     const check = Buffer.alloc(fixed.length);
     let offset = 0;
@@ -60,8 +62,8 @@ const manifestAt = (directory: string): Manifest | null => {
   } catch { return null; }
 };
 
-const save = (path: string, store: string): { directory: string; published: boolean; manifest: Manifest; warnings: string[] } => {
-  const bytes = snapshot(path);
+const save = (path: string, store: string, afterWrite: (name: string) => void): { directory: string; published: boolean; manifest: Manifest; warnings: string[] } => {
+  const bytes = readCodexSnapshot(path);
   const hash = sha256(bytes), directory = join(store, hash);
   const existing = manifestAt(directory);
   if (existing) return { directory, published: false, manifest: existing, warnings: [] };
@@ -79,6 +81,7 @@ const save = (path: string, store: string): { directory: string; published: bool
       const out = join(staging, name);
       writeFileSync(out, content, { mode: 0o600, flag: "wx" });
       chmodSync(out, 0o600);
+      afterWrite(name);
     }
     try { renameSync(staging, directory); }
     catch (error) {
@@ -90,14 +93,14 @@ const save = (path: string, store: string): { directory: string; published: bool
   } finally { if (existsSync(staging)) rmSync(staging, { recursive: true, force: true }); }
 };
 
-export const convertCodexLogs = (codexRoot: string, store: string): ConversionRun => {
+export const convertCodexLogs = (codexRoot: string, store: string, afterWrite: (name: string) => void = () => {}): ConversionRun => {
   const result: ConversionRun = { status: 0, published: 0, directories: [], errors: [] };
   let paths: string[];
   try { paths = [...walk(join(codexRoot, "sessions")), ...walk(join(codexRoot, "archived_sessions"))].sort(); }
   catch (error) { return { ...result, status: 1, errors: [String(error)] }; }
   for (const path of paths) {
     try {
-      const saved = save(resolve(path), resolve(store));
+      const saved = save(resolve(path), resolve(store), afterWrite);
       result.directories.push(saved.directory);
       if (saved.published) result.published++;
       if (saved.manifest.status === 1) result.status = 1;

@@ -5,6 +5,10 @@ import { codexDir, codexStore } from "../paths.ts";
 import { convertCodexLogs } from "../codex-store.ts";
 
 loadEnvFile();
+if (process.argv.length !== 2) {
+  console.error("usage: codex-log-convert");
+  process.exit(2);
+}
 try {
   const result = convertCodexLogs(codexDir(process.env), codexStore(process.env));
   result.directories.forEach((directory) => console.log(directory));

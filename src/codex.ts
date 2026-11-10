@@ -88,7 +88,8 @@ export const convertCodexLines = (rawLines: readonly string[]): Conversion => {
     const p = projected(item, warnings, index + 1);
     if (p === null || p.blocks.length === 0) return;
     if (firstUserText === null && p.type === "user" && item.type === "message") {
-      const text = p.blocks.filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join(" ").trim();
+      const text = array(item.content).map(object).filter((b) => b && (b.type === "input_text" || b.type === "output_text"))
+        .map((b) => string(b?.text) ?? "").join(" ").trim();
       if (text !== "") firstUserText = Array.from(text).slice(0, 80).join("");
     }
     const itemId = string(item.id) || String(index + 1);
@@ -96,7 +97,7 @@ export const convertCodexLines = (rawLines: readonly string[]): Conversion => {
     const uuid = hashObject({ provider: "codex", sessionId, itemId, blocks: p.blocks, originalRole: p.originalRole, parentId, blockKinds: p.blocks.map((b) => b.type) });
     rows.push({ type: p.type, uuid, sessionId, timestamp: string(record.timestamp), cwd, sourceOrder: index + 1,
       message: { role: p.type, content: p.blocks },
-      openai: { sourceLine: index + 1, itemId: string(item.id), parentId, originalRole: p.originalRole, channel: string(item.phase), version: uuid.slice(0, 12) },
+      openai: { sourceLine: index + 1, itemId: string(item.id), parentId, originalRole: p.originalRole, channel: string(item.channel) ?? string(item.phase), version: uuid.slice(0, 12) },
     });
   });
   const title = rows.length > 0 ? [{ type: "custom-title", sessionId, customTitle: firstUserText ?? sessionId }] : [];

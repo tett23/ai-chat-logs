@@ -42,6 +42,8 @@ describe("bin/install", () => {
     const listed = run("codex-log-sources", env);
     expect(listed.exitCode).toBe(0);
     expect(listed.stdout.toString().split("\n").filter(Boolean)).toHaveLength(2);
+    expect(run("codex-log-convert", env, undefined, ["unexpected"]).exitCode).toBe(2);
+    expect(run("codex-log-sources", env, undefined, ["unexpected"]).exitCode).toBe(2);
   });
 
   test("does not read .env in the working directory", () => {

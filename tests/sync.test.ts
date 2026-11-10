@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
@@ -102,6 +102,17 @@ describe("bin/sync", () => {
     const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], { env: { ...env, AI_CHAT_LOGS_CODEX_STORE: join(home, "bad-store") } });
     expect(result.exitCode).not.toBe(0);
     expect(new Database(dbPath, { readonly: true }).query("SELECT missing_since m FROM sources").get()).toEqual({ m: null });
+  });
+
+  test("P7 reports import failure after preserving the converted Codex snapshot", () => {
+    const home = tempDir();
+    writeFile(join(home, ".codex/sessions/one.jsonl"), jsonl({ type: "session_meta", payload: { id: "owner" } }));
+    writeFile(join(home, "db-as-file"), "not a database");
+    const result = Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync")], {
+      env: isolatedEnv({ HOME: home, AI_CHAT_LOGS_DB: join(home, "db-as-file") }),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(readdirSync(join(home, ".local/share/ai-chat-logs/codex")).filter((name) => /^[a-f0-9]{64}$/.test(name))).toHaveLength(1);
   });
 });
 
