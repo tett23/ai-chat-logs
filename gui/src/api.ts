@@ -17,6 +17,12 @@ export type SessionSummary = {
   first_at: string | null;
   last_at: string | null;
   message_count: number;
+  category: string | null;
+  parent_thread_id: string | null;
+  agent_path: string | null;
+  agent_nickname: string | null;
+  agent_role: string | null;
+  detail: string | null;
 };
 
 export type { Project } from "./projects.ts";
@@ -41,6 +47,7 @@ export type Message = {
   original_id: string | null;
   version: string | null;
   blocks: Block[];
+  encrypted_block_indexes: number[];
 };
 
 export type SearchHit = {
@@ -52,21 +59,30 @@ export type SearchHit = {
   role: string | null;
   title: string | null;
   snippet: string;
+  category: string | null;
+  parent_thread_id: string | null;
+  agent_path: string | null;
+  agent_nickname: string | null;
+  agent_role: string | null;
+  detail: string | null;
 };
 
-export type SearchResult = { hits: SearchHit[]; slow: boolean };
+export type SearchResult = { hits: SearchHit[]; total: number; slow: boolean };
+
+export type Category = "normal" | "subagent" | "internal" | "all";
 
 export const status = () => invoke<Status>("status");
-export const listProjects = () => invoke<Project[]>("list_projects");
-export const listSessions = (filter: Filter | null, offset: number, limit: number) =>
-  invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, offset, limit });
+export const listProjects = (category: Category) => invoke<Project[]>("list_projects", { category });
+export const listSessions = (filter: Filter | null, category: Category, offset: number, limit: number) =>
+  invoke<SessionSummary[]>("list_sessions", { provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, category, offset, limit });
+export const getSessionSummary = (provider: string, sessionId: string) => invoke<SessionSummary | null>("get_session_summary", { provider, sessionId });
 // docs/adr/0014
 export type MessagePage = { total: number; messages: Message[] };
 export const getMessages = (provider: string, sessionId: string, from: number, limit: number) =>
   invoke<MessagePage>("get_messages", { provider, sessionId, from, limit });
 export const getBlock = (rowid: number, index: number) => invoke<Block>("get_block", { rowid, index });
-export const search = (query: string, filter: Filter | null, offset: number, limit: number) =>
-  invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, offset, limit });
+export const search = (query: string, filter: Filter | null, category: Category, offset: number, limit: number) =>
+  invoke<SearchResult>("search", { query, provider: filter?.provider ?? null, cwd: filter?.cwd ?? null, cwdMissing: filter?.cwd_missing ?? false, category, offset, limit });
 
 // docs/adr/0007: settings and setup
 export type Origin = "environment" | "env_file" | "config_file" | "default";

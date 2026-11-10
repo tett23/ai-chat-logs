@@ -36,7 +36,7 @@ describe("messageShown", () => {
 describe("parseShown and serializeShown", () => {
   test("a saved state comes back", () => {
     const shown = { thinking: false, tool_use: true, tool_result: false };
-    expect(parseShown(serializeShown(shown))).toEqual(shown);
+    expect(parseShown(serializeShown(shown))).toEqual({ ...shown, unavailable: false });
   });
 
   test("a missing or malformed value means everything shows", () => {
@@ -47,6 +47,21 @@ describe("parseShown and serializeShown", () => {
   });
 
   test("unknown kinds are ignored and missing kinds show", () => {
-    expect(parseShown('{"thinking": false, "images": false}')).toEqual({ thinking: false, tool_use: true, tool_result: true });
+    expect(parseShown('{"thinking": false, "images": false}')).toEqual({ thinking: false, tool_use: true, tool_result: true, unavailable: false });
+  });
+});
+
+describe("ADR 0037 V4 encrypted placeholder visibility", () => {
+  test("identified placeholder defaults hidden while ordinary text with the same words remains", () => {
+    expect(ALL_SHOWN.unavailable).toBe(false);
+    expect(blockShown("text", ALL_SHOWN, false)).toBe(true);
+    expect(blockShown("text", ALL_SHOWN, true)).toBe(false);
+    expect(messageShown(["text"], ALL_SHOWN, false, [0])).toBe(false);
+    expect(messageShown(["text", "text"], ALL_SHOWN, false, [1])).toBe(true);
+  });
+
+  test("toggle survives serialization and restores default on old settings", () => {
+    expect(parseShown(serializeShown({ ...ALL_SHOWN, unavailable: true })).unavailable).toBe(true);
+    expect(parseShown('{"thinking":false}').unavailable).toBe(false);
   });
 });

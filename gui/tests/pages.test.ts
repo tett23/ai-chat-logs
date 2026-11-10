@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { initialRange, newerRange, newestFirst, olderRange, PAGE_SIZE } from "../src/pages.ts";
+import { ALL_SHOWN, messageShown } from "../src/visibility.ts";
 
 // docs/adr/0014, docs/adr/0016
 describe("initialRange", () => {
@@ -22,6 +23,13 @@ describe("initialRange", () => {
 });
 
 describe("olderRange", () => {
+  test("ADR 0037 V5 continues after a wholly hidden 100-message page", () => {
+    const first = initialRange(null, 101);
+    expect(first).toEqual({ from: 2, to: 101 });
+    expect(Array.from({ length: 100 }, () => messageShown(["text"], ALL_SHOWN, false, [0])).every((shown) => !shown)).toBe(true);
+    expect(olderRange(first as { from: number; to: number })).toEqual({ from: 1, to: 1 });
+    expect(messageShown(["text"], ALL_SHOWN, false)).toBe(true);
+  });
   test("the page before the loaded range, cut at 1", () => {
     expect(olderRange({ from: 78_984, to: 79_083 })).toEqual({ from: 78_884, to: 78_983 });
     expect(olderRange({ from: 30, to: 129 })).toEqual({ from: 1, to: 29 });

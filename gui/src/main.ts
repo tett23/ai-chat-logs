@@ -21,6 +21,7 @@ type ListMode = { kind: "sessions" } | { kind: "search"; query: string };
 
 const state = {
   filter: null as Filter | null,
+  category: "normal" as api.Category,
   mode: { kind: "sessions" } as ListMode,
   offset: 0,
   done: false,
@@ -36,6 +37,12 @@ const searchBox = h("input", {
 });
 const notice = h("div", { class: "text-xs text-gray-500" });
 const projectSelect = h("select", { class: "w-full rounded border border-gray-300 px-1 py-1" });
+const categorySelect = h("select", { class: "w-full rounded border border-gray-300 px-1 py-1" }, [
+  h("option", { attrs: { value: "normal" } }, ["通常"]),
+  h("option", { attrs: { value: "subagent" } }, ["サブエージェント"]),
+  h("option", { attrs: { value: "internal" } }, ["内部処理"]),
+  h("option", { attrs: { value: "all" } }, ["すべて"]),
+]);
 const list = h("ul", { class: "flex-1 overflow-y-auto divide-y divide-gray-100" });
 const view = h("section", { class: "flex-1 overflow-y-auto p-4" });
 // docs/adr/0010: kept on the browse screen, away from the setup buttons of the admin screen.
@@ -54,6 +61,7 @@ const browse = h("main", { class: "flex min-h-0 flex-1" }, [
   h("aside", { class: "flex w-96 flex-col border-r border-gray-200" }, [
     h("div", { class: "flex flex-col gap-1 border-b border-gray-200 p-2" }, [
       projectSelect,
+      categorySelect,
       h("div", {}, [scanButton]),
       scanStatus,
       scanDetails,
@@ -183,7 +191,7 @@ const withLoadButton = (block: Exclude<api.Block, { kind: "text" }>, rowid: numb
 };
 
 // docs/adr/0024: data-block-kind lets the 表示 menu hide the blocks of a kind with CSS (app.css).
-const blockNode = (block: api.Block, rowid: number, index: number): HTMLElement => {
+const blockNode = (block: api.Block, rowid: number, index: number, unavailable: boolean): HTMLElement => {
   const node =
     block.kind === "text"
       ? h("div", {}, textParts(block.text))
@@ -193,6 +201,7 @@ const blockNode = (block: api.Block, rowid: number, index: number): HTMLElement 
           block.kind === "tool_result" && block.is_error ? "text-red-600" : "text-gray-500",
         );
   node.dataset.blockKind = block.kind;
+  if (unavailable) node.dataset.unavailable = "true";
   return node;
 };
 
@@ -205,7 +214,7 @@ const messageNode = (message: api.Message): HTMLElement => {
     message.original_id ? h("span", { class: "break-all" }, [`元ID: ${message.original_id}`]) : null,
     message.version ? h("span", {}, [`版: ${message.version}`]) : null,
   ]);
-  const body = () => message.blocks.map((block, i) => blockNode(block, message.rowid, i));
+  const body = () => message.blocks.map((block, i) => blockNode(block, message.rowid, i, message.encrypted_block_indexes.includes(i)));
   const content = message.is_sidechain ? [folded("サブエージェント", () => [header, ...body()])] : [header, ...body()];
   const article = h(
     "article",
@@ -214,6 +223,7 @@ const messageNode = (message: api.Message): HTMLElement => {
       attrs: {
         "data-index": String(message.index),
         "data-kinds": message.blocks.map((b) => b.kind).join(" "),
+        "data-unavailable-indexes": message.encrypted_block_indexes.join(" "),
         ...(message.uuid ? { "data-uuid": message.uuid } : {}),
       },
     },
@@ -236,11 +246,14 @@ const readShown = (): Shown => {
 let shown = readShown();
 function applyShown(article: HTMLElement): void {
   const kinds = (article.dataset.kinds ?? "").split(" ").filter((k) => k !== "");
-  article.hidden = !messageShown(kinds, shown, article.dataset.highlight === "true");
+  const unavailable = (article.dataset.unavailableIndexes ?? "").split(" ").filter(Boolean).map(Number);
+  article.hidden = !messageShown(kinds, shown, article.dataset.highlight === "true", unavailable);
 }
 const applyShownToView = (): void => {
   HIDEABLE.forEach((kind) => view.classList.toggle(`hide-${kind}`, !shown[kind]));
+  view.classList.toggle("hide-unavailable", !shown.unavailable);
   view.querySelectorAll<HTMLElement>("article[data-kinds]").forEach(applyShown);
+  refreshStatus();
 };
 const shownMenu = h(
   "div",
@@ -262,10 +275,19 @@ const shownMenu = h(
       });
       return h("label", { class: "flex items-center gap-1" }, [box, kind]);
     }),
+    (() => {
+      const box = h("input", { attrs: { type: "checkbox" } });
+      box.checked = shown.unavailable ?? false;
+      box.addEventListener("change", () => {
+        shown = { ...shown, unavailable: box.checked };
+        try { localStorage.setItem(SHOWN_KEY, serializeShown(shown)); } catch { /* this run still uses the choice */ }
+        applyShownToView();
+        fillView();
+      });
+      return h("label", { class: "flex items-center gap-1" }, [box, "表示できない内容"]);
+    })(),
   ],
 );
-
-applyShownToView();
 
 // docs/adr/0014, docs/adr/0016: a session is loaded a page at a time as the view scrolls, newest first:
 // older messages are added below, newer ones above.
@@ -283,12 +305,14 @@ const conversation = {
 const pageStatus = (): HTMLElement =>
   h("p", { class: "text-xs text-gray-400" }, [
     conversation.range ? `${conversation.range.from}〜${conversation.range.to} / ${conversation.total}` : "",
+    (() => { const count = view.querySelectorAll("article[hidden]").length; return count > 0 ? `（読み込み済みの非表示 ${count} 件）` : ""; })(),
     conversation.loadingUp || conversation.loadingDown ? "（読み込み中…）" : "",
   ]);
 // docs/adr/0024: the sticky header is held 16px down inside the padding of the view, so the messages
 // start 16px lower to stay clear of it at the top.
 const messagesBox = h("div", { class: "pt-4" });
 const statusText = h("div");
+const contextBar = h("div", { class: "flex flex-wrap items-center gap-2 text-xs text-gray-500" });
 // docs/adr/0026: the whole session as Markdown, written by chat-log export.
 const exportStatus = h("p", { class: "whitespace-pre-wrap break-all text-xs text-gray-500 empty:hidden" });
 const exportButton = h(
@@ -320,9 +344,36 @@ const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90 py-1" }
     statusText,
     h("div", { class: "flex items-center gap-3" }, [exportButton, shownMenu]),
   ]),
+  contextBar,
   exportStatus,
 ]);
 const refreshStatus = (): void => clear(statusText, pageStatus());
+applyShownToView();
+
+const renderContext = (meta: api.SessionSummary | null, generation: number): void => {
+  const category = meta?.category;
+  const labels: Record<string, string> = { subagent: "サブエージェント", internal: "内部処理" };
+  clear(contextBar, ...[
+    meta?.title ? h("span", { class: "font-medium text-gray-700" }, [meta.title]) : null,
+    category && labels[category] ? h("span", {}, [labels[category]]) : null,
+    meta?.agent_nickname ? h("span", {}, [`名前: ${meta.agent_nickname}`]) : null,
+    meta?.agent_role ? h("span", {}, [`役割: ${meta.agent_role}`]) : null,
+    meta?.agent_path ? h("span", {}, [`パス: ${meta.agent_path}`]) : null,
+    meta?.detail ? h("span", {}, [`詳細: ${meta.detail}`]) : null,
+  ].filter((node): node is HTMLElement => node !== null));
+  if (meta?.parent_thread_id) {
+    const parentId = meta.parent_thread_id;
+    const label = h("span", {}, [`親: ${parentId}`]);
+    contextBar.append(label);
+    void api.getSessionSummary("codex", parentId).then((parent) => {
+      if (generation !== conversation.generation || !parent) return;
+      const button = h("button", { class: "rounded border border-gray-300 px-1 hover:bg-gray-50", on: {
+        click: () => void openSession("codex", parent.session_id, parent.title, null, null, parent.message_count, []),
+      } }, [`親へ: ${parent.title ?? parentId}`]);
+      label.replaceWith(button);
+    }).catch(() => undefined);
+  }
+};
 
 const loadRange = async (range: Range): Promise<api.MessagePage | null> => {
   const generation = conversation.generation;
@@ -412,6 +463,10 @@ const openSession = async (
   const generation = conversation.generation;
   clear(view, h("p", { class: "text-gray-500" }, ["読み込み中…"]));
   try {
+    const meta = await api.getSessionSummary(provider, sessionId);
+    if (generation !== conversation.generation) return;
+    conversation.title = meta?.title ?? title;
+    renderContext(meta, generation);
     // Around a hit the range does not depend on the total; the newest page uses the list's count,
     // and the backend returns what exists in the range.
     const first = initialRange(target, target === null ? (knownTotal ?? 0) : Number.MAX_SAFE_INTEGER);
@@ -491,9 +546,9 @@ const loadPage = async (): Promise<void> => {
     const mode = state.mode;
     const items =
       mode.kind === "sessions"
-        ? (await api.listSessions(state.filter, state.offset, PAGE)).map(sessionItem)
-        : await api.search(mode.query, state.filter, state.offset, PAGE).then((r) => {
-            notice.textContent = r.slow ? "3文字未満の語を含むため、全件を走査しています（遅くなります）。" : "";
+        ? (await api.listSessions(state.filter, state.category, state.offset, PAGE)).map(sessionItem)
+        : await api.search(mode.query, state.filter, state.category, state.offset, PAGE).then((r) => {
+            notice.textContent = `検索結果 ${r.total} 件${r.slow ? "。3文字未満の語を含むため、全件を走査しています（遅くなります）。" : ""}`;
             return r.hits.map(hitItem);
           });
     if (generation !== state.generation) return;
@@ -537,6 +592,10 @@ projectSelect.addEventListener("change", () => {
   state.filter = projectSelect.value === "" ? null : (JSON.parse(projectSelect.value) as Filter);
   resetList();
 });
+categorySelect.addEventListener("change", () => {
+  state.category = categorySelect.value as api.Category;
+  void loadProjects().then(resetList).catch(showError);
+});
 
 // Reloads the project filter and the list after the database may have changed.
 let adminRendered = false;
@@ -558,7 +617,7 @@ adminTab.addEventListener("click", () => showTab("admin"));
 // Rebuilds the project filter, keeping the selected entry when it still exists.
 const loadProjects = async (): Promise<void> => {
   const selected = projectSelect.value;
-  const projects = await api.listProjects();
+  const projects = await api.listProjects(state.category);
   const options = projectOptions(projects).map((o) => JSON.stringify(o.filter));
   clear(
     projectSelect,

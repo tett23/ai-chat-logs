@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { detectChange } from "./change.ts";
+import { rebuildCodexPresentation } from "./codex-presentation.ts";
 import { extractFields } from "./extract.ts";
 import { isFileKind, isLineKind, type LineKind } from "./kinds.ts";
 import { splitCompleteLines } from "./lines.ts";
@@ -179,7 +180,7 @@ export const importSources = (db: Database, entries: readonly SourceEntry[], opt
   const runId = db.query<{ id: number }, [string]>("INSERT INTO runs (started_at) VALUES (?) RETURNING id").get(now())?.id as number;
   const outcomes = entries.map((entry) => importOne(db, entry, now(), options.chunkBytes ?? DEFAULT_CHUNK_BYTES));
   if (options.markMissing) markMissing(db, new Set(entries.map((e) => e.path)), now());
-  const errors = outcomes.flatMap((o) => ("error" in o ? [o.error] : []));
+  const errors = [...outcomes.flatMap((o) => ("error" in o ? [o.error] : [])), ...rebuildCodexPresentation(db)];
   const summary: RunSummary = {
     runId,
     sourcesSeen: entries.length,

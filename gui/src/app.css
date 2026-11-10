@@ -6,3 +6,7 @@
 .hide-tool_result article:not([data-highlight]) [data-block-kind="tool_result"] {
   display: none;
 }
+
+.hide-unavailable article [data-unavailable="true"] {
+  display: none;
+}

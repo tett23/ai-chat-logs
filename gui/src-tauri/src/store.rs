@@ -3,16 +3,15 @@
 use crate::blocks::{Block, to_blocks, truncate};
 use crate::query::{HIT_END, HIT_START, SearchPlan, make_snippet};
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OpenFlags, params, params_from_iter};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
-/// The schema version (PRAGMA user_version) whose tables the GUI reads; 6 for the payloads of
-/// docs/adr/0031, without which records holding markers would show them.
-pub const REQUIRED_SCHEMA_VERSION: i64 = 7;
+/// docs/adr/0037: the GUI requires the presentation tables introduced by migration 8.
+pub const REQUIRED_SCHEMA_VERSION: i64 = 8;
 
 const SNIPPET_CONTEXT: usize = 32;
 
@@ -78,9 +77,29 @@ pub struct SessionSummary {
     pub first_at: Option<String>,
     pub last_at: Option<String>,
     pub message_count: i64,
+    pub category: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub agent_path: Option<String>,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub detail: Option<String>,
+}
+
+const CATEGORY_WHERE: &str = "(?1 = 'all' OR (?1 = 'normal' AND (ss.provider <> 'codex' OR coalesce(cp.category, 'unknown') IN ('normal', 'unknown'))) OR (?1 = 'subagent' AND ss.provider = 'codex' AND cp.category = 'subagent') OR (?1 = 'internal' AND ss.provider = 'codex' AND cp.category = 'internal'))";
+const SEARCH_CATEGORY_WHERE: &str = "(? = 'all' OR (? = 'normal' AND (s.provider <> 'codex' OR coalesce(cp.category, 'unknown') IN ('normal', 'unknown'))) OR (? = 'subagent' AND s.provider = 'codex' AND cp.category = 'subagent') OR (? = 'internal' AND s.provider = 'codex' AND cp.category = 'internal'))";
+
+fn valid_category(category: &str) -> Result<()> {
+    if ["normal", "subagent", "internal", "all"].contains(&category) {
+        Ok(())
+    } else {
+        Err(StoreError::Settings {
+            message: format!("unknown category: {category}"),
+        })
+    }
 }
 
 /// Sessions newest first, optionally narrowed to a provider and a cwd (docs/adr/0006).
+#[cfg(test)]
 pub fn list_sessions(
     conn: &Connection,
     provider: Option<&str>,
@@ -89,30 +108,52 @@ pub fn list_sessions(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<SessionSummary>> {
+    list_sessions_for_category(conn, provider, cwd, cwd_missing, "all", offset, limit)
+}
+
+pub fn list_sessions_for_category(
+    conn: &Connection,
+    provider: Option<&str>,
+    cwd: Option<&str>,
+    cwd_missing: bool,
+    category: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<SessionSummary>> {
+    valid_category(category)?;
     if cwd_missing && cwd.is_some() {
         return Err(StoreError::Settings {
             message: "cwd と cwd_missing は同時に指定できません".into(),
         });
     }
-    let mut stmt = conn.prepare_cached(
-        "SELECT provider, session_id, cwd, title, first_at, last_at, message_count
-         FROM session_summaries
-         WHERE (?1 IS NULL OR provider = ?1) AND (?2 IS NULL OR cwd = ?2)
-           AND (?3 = 0 OR cwd IS NULL)
-         ORDER BY last_at DESC, session_id
-         LIMIT ?4 OFFSET ?5",
+    let sql = format!("SELECT ss.provider, ss.session_id, ss.cwd, coalesce(cp.display_title, ss.title), ss.first_at, ss.last_at, ss.message_count,
+                 cp.category, cp.parent_thread_id, cp.agent_path, cp.agent_nickname, cp.agent_role, cp.detail
+         FROM session_summaries ss LEFT JOIN codex_session_presentation cp ON ss.provider = 'codex' AND cp.session_id = ss.session_id
+         WHERE {CATEGORY_WHERE} AND (?2 IS NULL OR ss.provider = ?2) AND (?3 IS NULL OR ss.cwd = ?3)
+           AND (?4 = 0 OR ss.cwd IS NULL)
+         ORDER BY ss.last_at DESC, ss.session_id
+         LIMIT ?5 OFFSET ?6");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map(
+        params![category, provider, cwd, cwd_missing, limit, offset],
+        |row| {
+            Ok(SessionSummary {
+                provider: row.get(0)?,
+                session_id: row.get(1)?,
+                cwd: row.get(2)?,
+                title: row.get(3)?,
+                first_at: row.get(4)?,
+                last_at: row.get(5)?,
+                message_count: row.get(6)?,
+                category: row.get(7)?,
+                parent_thread_id: row.get(8)?,
+                agent_path: row.get(9)?,
+                agent_nickname: row.get(10)?,
+                agent_role: row.get(11)?,
+                detail: row.get(12)?,
+            })
+        },
     )?;
-    let rows = stmt.query_map(params![provider, cwd, cwd_missing, limit, offset], |row| {
-        Ok(SessionSummary {
-            provider: row.get(0)?,
-            session_id: row.get(1)?,
-            cwd: row.get(2)?,
-            title: row.get(3)?,
-            first_at: row.get(4)?,
-            last_at: row.get(5)?,
-            message_count: row.get(6)?,
-        })
-    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -123,12 +164,19 @@ pub struct Project {
     pub session_count: i64,
 }
 
+#[cfg(test)]
 pub fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT provider, cwd, count(*) FROM session_summaries
-         GROUP BY provider, cwd ORDER BY max(last_at) DESC",
-    )?;
-    let rows = stmt.query_map([], |row| {
+    list_projects_for_category(conn, "all")
+}
+
+pub fn list_projects_for_category(conn: &Connection, category: &str) -> Result<Vec<Project>> {
+    valid_category(category)?;
+    let sql = format!("SELECT ss.provider, ss.cwd, count(*) FROM session_summaries ss
+         LEFT JOIN codex_session_presentation cp ON ss.provider = 'codex' AND cp.session_id = ss.session_id
+         WHERE {CATEGORY_WHERE}
+         GROUP BY ss.provider, ss.cwd ORDER BY max(ss.last_at) DESC");
+    let mut stmt = conn.prepare_cached(&sql)?;
+    let rows = stmt.query_map(params![category], |row| {
         Ok(Project {
             provider: row.get(0)?,
             cwd: row.get(1)?,
@@ -136,6 +184,37 @@ pub fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
         })
     })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Lookup for direct navigation; category selection does not reject the parent.
+pub fn get_session_summary(
+    conn: &Connection,
+    provider: &str,
+    session_id: &str,
+) -> Result<Option<SessionSummary>> {
+    let mut stmt = conn.prepare_cached("SELECT ss.provider, ss.session_id, ss.cwd, coalesce(cp.display_title, ss.title), ss.first_at, ss.last_at, ss.message_count,
+        cp.category, cp.parent_thread_id, cp.agent_path, cp.agent_nickname, cp.agent_role, cp.detail
+        FROM session_summaries ss LEFT JOIN codex_session_presentation cp ON ss.provider = 'codex' AND cp.session_id = ss.session_id
+        WHERE ss.provider = ?1 AND ss.session_id = ?2")?;
+    Ok(stmt
+        .query_row(params![provider, session_id], |row| {
+            Ok(SessionSummary {
+                provider: row.get(0)?,
+                session_id: row.get(1)?,
+                cwd: row.get(2)?,
+                title: row.get(3)?,
+                first_at: row.get(4)?,
+                last_at: row.get(5)?,
+                message_count: row.get(6)?,
+                category: row.get(7)?,
+                parent_thread_id: row.get(8)?,
+                agent_path: row.get(9)?,
+                agent_nickname: row.get(10)?,
+                agent_role: row.get(11)?,
+                detail: row.get(12)?,
+            })
+        })
+        .optional()?)
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -152,6 +231,7 @@ pub struct Message {
     pub original_id: Option<String>,
     pub version: Option<String>,
     pub blocks: Vec<Block>,
+    pub encrypted_block_indexes: Vec<usize>,
 }
 
 fn content_blocks(value: &serde_json::Value) -> Vec<Block> {
@@ -164,6 +244,7 @@ fn to_message(
     uuid: Option<String>,
     timestamp: Option<String>,
     raw: &str,
+    encrypted_block_indexes: Option<&str>,
 ) -> Message {
     let value: serde_json::Value = serde_json::from_str(raw).unwrap_or_default();
     let message = value.get("message");
@@ -185,6 +266,9 @@ fn to_message(
             .into_iter()
             .map(|b| truncate(b, MAX_BLOCK_CHARS))
             .collect(),
+        encrypted_block_indexes: encrypted_block_indexes
+            .and_then(|raw| serde_json::from_str(raw).ok())
+            .unwrap_or_default(),
     }
 }
 
@@ -215,14 +299,15 @@ pub fn get_messages(
         .unwrap_or(0) as usize;
     let to = from.saturating_add(limit).saturating_sub(1);
     let mut stmt = conn.prepare_cached(
-        "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw, r.payload_state
-         FROM (SELECT record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''),
+        "SELECT x.record_rowid, x.idx, r.uuid, r.timestamp, r.raw, r.payload_state, cp.encrypted_block_indexes
+         FROM (SELECT provider, record_rowid, row_number() OVER (ORDER BY coalesce(timestamp, ''),
                  CASE WHEN provider = 'codex' THEN CAST(raw ->> '$.sourceOrder' AS INTEGER) END,
                  CASE WHEN provider = 'codex' THEN coalesce(raw ->> '$.uuid', '') ELSE path END,
                  CASE WHEN provider = 'codex' THEN '' ELSE generation END,
                  CASE WHEN provider = 'codex' THEN 0 ELSE line_no END) AS idx
                FROM session_messages WHERE provider = ?1 AND session_id = ?2) x
          JOIN records r ON r.rowid = x.record_rowid
+         LEFT JOIN codex_item_presentation cp ON x.provider = 'codex' AND cp.session_id = ?2 AND cp.uuid = r.uuid
          WHERE x.idx BETWEEN ?3 AND ?4
          ORDER BY x.idx",
     )?;
@@ -237,6 +322,7 @@ pub fn get_messages(
                 row.get(2)?,
                 row.get(3)?,
                 &raw,
+                row.get::<_, Option<String>>(6)?.as_deref(),
             ))
         },
     )?;
@@ -316,11 +402,18 @@ pub struct SearchHit {
     pub role: Option<String>,
     pub title: Option<String>,
     pub snippet: String,
+    pub category: Option<String>,
+    pub parent_thread_id: Option<String>,
+    pub agent_path: Option<String>,
+    pub agent_nickname: Option<String>,
+    pub agent_role: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
 pub struct SearchResult {
     pub hits: Vec<SearchHit>,
+    pub total: usize,
     /// Some terms are shorter than three characters and the whole table was scanned.
     pub slow: bool,
 }
@@ -331,8 +424,7 @@ fn search_sql(
     provider: Option<&str>,
     cwd: Option<&str>,
     cwd_missing: bool,
-    offset: i64,
-    limit: i64,
+    category: &str,
 ) -> (String, Vec<SqlValue>) {
     let snippet = match plan.fts {
         Some(_) => format!("snippet(record_texts, 0, '{HIT_START}', '{HIT_END}', '…', 16)"),
@@ -358,24 +450,31 @@ fn search_sql(
         .collect::<Vec<_>>()
         .join(" AND ");
     let sql = format!(
-        "SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role', ss.title, {snippet}, r.rowid
+        "SELECT s.provider, r.session_id, r.uuid, r.timestamp, r.raw ->> '$.message.role', coalesce(cp.display_title, ss.title), {snippet}, r.rowid,
+                cp.category, cp.parent_thread_id, cp.agent_path, cp.agent_nickname, cp.agent_role, cp.detail,
+                CASE WHEN ip.encrypted_block_indexes IS NOT NULL THEN r.raw END,
+                CASE WHEN ip.encrypted_block_indexes IS NOT NULL THEN r.payload_state END,
+                ip.encrypted_block_indexes
          FROM record_texts
          JOIN records r ON r.rowid = record_texts.rowid
          JOIN sources s ON s.id = r.source_id
          LEFT JOIN session_summaries ss ON ss.provider = s.provider AND ss.session_id = r.session_id
+         LEFT JOIN codex_session_presentation cp ON s.provider = 'codex' AND cp.session_id = r.session_id
+         LEFT JOIN codex_item_presentation ip ON s.provider = 'codex' AND ip.session_id = r.session_id AND ip.uuid = r.uuid
          WHERE {where_clause}
+           AND {SEARCH_CATEGORY_WHERE}
            AND NOT EXISTS (SELECT 1 FROM copied_records c WHERE c.record_rowid = r.rowid)
-         ORDER BY r.timestamp DESC, r.rowid DESC
-         LIMIT ? OFFSET ?"
+         ORDER BY r.timestamp DESC, r.rowid DESC"
     );
     let params = conditions
         .into_iter()
         .map(|(_, v)| v)
-        .chain([SqlValue::Integer(limit), SqlValue::Integer(offset)])
+        .chain((0..4).map(|_| SqlValue::Text(category.to_owned())))
         .collect();
     (sql, params)
 }
 
+#[cfg(test)]
 pub fn search(
     conn: &Connection,
     plan: &SearchPlan,
@@ -385,6 +484,24 @@ pub fn search(
     offset: i64,
     limit: i64,
 ) -> Result<SearchResult> {
+    search_for_category(conn, plan, provider, cwd, cwd_missing, "all", offset, limit)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "existing provider and cwd filters plus ADR 0037 category and pagination"
+)]
+pub fn search_for_category(
+    conn: &Connection,
+    plan: &SearchPlan,
+    provider: Option<&str>,
+    cwd: Option<&str>,
+    cwd_missing: bool,
+    category: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<SearchResult> {
+    valid_category(category)?;
     if cwd_missing && cwd.is_some() {
         return Err(StoreError::Settings {
             message: "cwd と cwd_missing は同時に指定できません".into(),
@@ -393,18 +510,47 @@ pub fn search(
     if plan.is_empty() {
         return Ok(SearchResult {
             hits: vec![],
+            total: 0,
             slow: false,
         });
     }
-    let (sql, values) = search_sql(plan, provider, cwd, cwd_missing, offset, limit);
+    let (sql, values) = search_sql(plan, provider, cwd, cwd_missing, category);
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(values), |row| {
         let text: String = row.get(6)?;
         let rowid: i64 = row.get(7)?;
+        let raw: Option<String> = row.get(14)?;
+        let payload_state: Option<i64> = row.get(15)?;
+        let masked: Option<String> = row.get(16)?;
+        let provider: String = row.get(0)?;
+        let visible = if provider == "codex" && masked.is_some() {
+            let raw = crate::payloads::restored_raw(conn, raw.unwrap_or_default(), payload_state)?;
+            let value: serde_json::Value = serde_json::from_str(&raw).unwrap_or_default();
+            let indexes: Vec<usize> = masked
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_default();
+            let parts = content_blocks(&value)
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, block)| {
+                    if indexes.contains(&index) {
+                        return None;
+                    }
+                    match block {
+                        Block::Text { text } | Block::Thinking { text, .. } => Some(text),
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            Some(parts.join("\n"))
+        } else {
+            None
+        };
         Ok((
             rowid,
             SearchHit {
-                provider: row.get(0)?,
+                provider,
                 session_id: row.get(1)?,
                 index: None,
                 uuid: row.get(2)?,
@@ -412,13 +558,46 @@ pub fn search(
                 role: row.get(4)?,
                 title: row.get(5)?,
                 snippet: match plan.fts {
-                    Some(_) => text,
-                    None => make_snippet(&text, &plan.terms, SNIPPET_CONTEXT),
+                    Some(_) if visible.is_none() => text.clone(),
+                    Some(_) => make_snippet(
+                        visible.as_deref().unwrap_or_default(),
+                        &plan.terms,
+                        SNIPPET_CONTEXT,
+                    ),
+                    None => make_snippet(
+                        visible.as_deref().unwrap_or(&text),
+                        &plan.terms,
+                        SNIPPET_CONTEXT,
+                    ),
                 },
+                category: row.get(8)?,
+                parent_thread_id: row.get(9)?,
+                agent_path: row.get(10)?,
+                agent_nickname: row.get(11)?,
+                agent_role: row.get(12)?,
+                detail: row.get(13)?,
             },
+            visible,
         ))
     })?;
-    let found = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    let found = rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|(_, _, visible)| {
+            visible.as_ref().is_none_or(|body| {
+                plan.terms
+                    .iter()
+                    .all(|term| body.to_lowercase().contains(&term.to_lowercase()))
+            })
+        })
+        .map(|(rowid, hit, _)| (rowid, hit))
+        .collect::<Vec<_>>();
+    let total = found.len();
+    let found = found
+        .into_iter()
+        .skip(offset.max(0) as usize)
+        .take(limit.max(0) as usize)
+        .collect::<Vec<_>>();
     let indexes = message_indexes(conn, &found)?;
     let hits = found
         .into_iter()
@@ -429,6 +608,7 @@ pub fn search(
         .collect();
     Ok(SearchResult {
         hits,
+        total,
         slow: plan.is_slow(),
     })
 }
@@ -452,7 +632,7 @@ mod tests {
     use crate::query::plan_search;
     use serde_json::json;
 
-    const SCHEMA: [&str; 7] = [
+    const SCHEMA: [&str; 8] = [
         include_str!("../../../schema/0001-initial.sql"),
         include_str!("../../../schema/0002-search-and-summaries.sql"),
         include_str!("../../../schema/0003-other-providers.sql"),
@@ -460,6 +640,7 @@ mod tests {
         include_str!("../../../schema/0005-tool-texts.sql"),
         include_str!("../../../schema/0006-payloads.sql"),
         include_str!("../../../schema/0007-codex-conversations.sql"),
+        include_str!("../../../schema/0008-codex-session-presentation.sql"),
     ];
 
     struct Line {
@@ -500,7 +681,7 @@ mod tests {
         SCHEMA
             .iter()
             .for_each(|sql| conn.execute_batch(sql).unwrap());
-        conn.execute_batch("PRAGMA user_version = 7").unwrap();
+        conn.execute_batch("PRAGMA user_version = 8").unwrap();
         lines.iter().enumerate().for_each(|(i, l)| {
             conn.execute(
                 "INSERT OR IGNORE INTO sources (kind, path, first_seen_at, last_seen_at)
@@ -526,6 +707,186 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn v5_category_filters_before_list_and_project_pagination() {
+        let mut normal = line(
+            "/p/normal",
+            "normal",
+            "n",
+            "2026-11-01T00:00:01Z",
+            "user",
+            json!("public"),
+        );
+        normal.kind = "codex/conversation";
+        let mut sub = line(
+            "/p/sub",
+            "sub",
+            "s",
+            "2026-11-01T00:00:02Z",
+            "user",
+            json!("public"),
+        );
+        sub.kind = "codex/conversation";
+        let path = build(&[normal, sub]);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("INSERT INTO codex_session_presentation(session_id, category, display_title, rule_version, source_record_max_rowid) VALUES ('normal', 'normal', 'N', 1, 1), ('sub', 'subagent', 'S', 1, 2)").unwrap();
+        assert_eq!(
+            list_sessions_for_category(&conn, None, None, false, "normal", 0, 1).unwrap()[0]
+                .session_id,
+            "normal"
+        );
+        assert_eq!(
+            list_sessions_for_category(&conn, None, None, false, "subagent", 0, 1).unwrap()[0]
+                .session_id,
+            "sub"
+        );
+        assert_eq!(
+            list_sessions_for_category(
+                &conn,
+                Some("codex"),
+                Some("/work/a"),
+                false,
+                "normal",
+                0,
+                1
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        assert!(
+            list_sessions_for_category(&conn, Some("claude-code"), None, false, "subagent", 0, 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            list_projects_for_category(&conn, "subagent").unwrap()[0].session_count,
+            1
+        );
+        assert_eq!(
+            get_session_summary(&conn, "codex", "sub")
+                .unwrap()
+                .unwrap()
+                .title
+                .as_deref(),
+            Some("S")
+        );
+        let result = search_for_category(
+            &conn,
+            &plan_search("public"),
+            None,
+            None,
+            false,
+            "normal",
+            0,
+            1,
+        )
+        .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.hits[0].session_id.as_deref(), Some("normal"));
+    }
+
+    #[test]
+    fn v4_v5_masked_blocks_are_excluded_before_search_paging_but_not_from_message_numbers() {
+        let mut masked = line(
+            "/p/a",
+            "sample",
+            "masked",
+            "2026-11-01T00:00:04Z",
+            "assistant",
+            json!([{"type":"text","text":"placeholder"}]),
+        );
+        masked.kind = "codex/conversation";
+        let mut mixed = line(
+            "/p/a",
+            "sample",
+            "mixed",
+            "2026-11-01T00:00:02Z",
+            "assistant",
+            json!([{"type":"text","text":"placeholder"},{"type":"text","text":"publicword"}]),
+        );
+        mixed.kind = "codex/conversation";
+        let mut ordinary = line(
+            "/p/a",
+            "sample",
+            "ordinary",
+            "2026-11-01T00:00:03Z",
+            "user",
+            json!([{"type":"text","text":"placeholder"}]),
+        );
+        ordinary.kind = "codex/conversation";
+        let path = build(&[masked, mixed, ordinary]);
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("INSERT INTO codex_session_presentation(session_id, category, display_title, rule_version, source_record_max_rowid) VALUES ('sample','normal','Visible title',1,3);
+          INSERT INTO codex_item_presentation(session_id,uuid,encrypted_block_indexes,rule_version) VALUES ('sample','masked','[0]',1),('sample','mixed','[0]',1)").unwrap();
+        let page = get_messages(&conn, "codex", "sample", 1, 3).unwrap();
+        assert_eq!(page.total, 3);
+        assert_eq!(
+            page.messages.iter().map(|m| m.index).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        for uuid in ["masked", "mixed"] {
+            assert_eq!(
+                page.messages
+                    .iter()
+                    .find(|m| m.uuid.as_deref() == Some(uuid))
+                    .unwrap()
+                    .encrypted_block_indexes,
+                vec![0]
+            );
+        }
+        assert!(
+            page.messages
+                .iter()
+                .find(|m| m.uuid.as_deref() == Some("ordinary"))
+                .unwrap()
+                .encrypted_block_indexes
+                .is_empty()
+        );
+        let only_public = search_for_category(
+            &conn,
+            &plan_search("placeholder"),
+            None,
+            None,
+            false,
+            "normal",
+            0,
+            1,
+        )
+        .unwrap();
+        assert_eq!(only_public.total, 1);
+        assert_eq!(only_public.hits[0].uuid.as_deref(), Some("ordinary"));
+        let mixed_public = search_for_category(
+            &conn,
+            &plan_search("publicword"),
+            None,
+            None,
+            false,
+            "normal",
+            0,
+            1,
+        )
+        .unwrap();
+        assert_eq!(mixed_public.total, 1);
+        assert_eq!(mixed_public.hits[0].uuid.as_deref(), Some("mixed"));
+        assert_eq!(mixed_public.hits[0].title.as_deref(), Some("Visible title"));
+        assert_eq!(
+            search_for_category(
+                &conn,
+                &plan_search("placeholder publicword"),
+                None,
+                None,
+                false,
+                "normal",
+                0,
+                1
+            )
+            .unwrap()
+            .total,
+            0
+        );
     }
 
     #[test]
@@ -748,7 +1109,7 @@ mod tests {
             open_read_only(&path).err(),
             Some(StoreError::OldSchema {
                 found: 1,
-                required: 7
+                required: 8
             })
         );
     }
@@ -1439,6 +1800,7 @@ mod tests {
             search(&conn, &plan_search("  "), None, None, false, 0, 10).unwrap(),
             SearchResult {
                 hits: vec![],
+                total: 0,
                 slow: false
             }
         );

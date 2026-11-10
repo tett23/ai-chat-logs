@@ -42,7 +42,7 @@ describe("ADR 0033", () => {
     expect(rows(db, "SELECT count(*) n FROM payloads")).toEqual([{ n: 1 }]);
     db.close();
     const afterDb = openDatabase(path);
-    expect(rows(afterDb, "PRAGMA user_version")).toEqual([{ user_version: 7 }]);
+    expect(rows(afterDb, "PRAGMA user_version")).toEqual([{ user_version: 8 }]);
     expect(tables.map((table) => rows(afterDb, `SELECT * FROM "${table}"`))).toEqual(before);
     expect(rows(afterDb, "SELECT rowid FROM records ORDER BY rowid")).toEqual(recordRowids);
     expect(afterDb.query<{ raw: string; payload_state: number | null }, []>("SELECT raw, payload_state FROM records ORDER BY rowid").all().map((r) => restoredRaw(afterDb)(r.raw, r.payload_state))).toEqual(rawBefore);
@@ -119,7 +119,7 @@ describe("ADR 0033", () => {
     expect(rows(db, "PRAGMA user_version")).toEqual([{ user_version: 6 }]);
     expect(rows(db, "SELECT name, sql FROM sqlite_master WHERE type = 'view' ORDER BY name")).toEqual(before);
     db.close(); const retried = openDatabase(path);
-    expect(rows(retried, "PRAGMA user_version")).toEqual([{ user_version: 7 }]);
+    expect(rows(retried, "PRAGMA user_version")).toEqual([{ user_version: 8 }]);
   });
 
   test("D5 indexed text uses converted conversation, not raw marker", () => {
