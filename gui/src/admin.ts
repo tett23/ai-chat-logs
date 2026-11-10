@@ -9,6 +9,8 @@ const LABELS: Record<string, string> = {
   AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR: "デスクトップアプリのディレクトリ",
   AI_CHAT_LOGS_CLAUDE_AI_DIR: "claude.ai のエクスポートの保存先",
   AI_CHAT_LOGS_CLAUDE_AI_INBOX: "claude.ai のエクスポートの受け取り用のディレクトリ",
+  AI_CHAT_LOGS_CODEX_DIR: "Codex のログディレクトリ",
+  AI_CHAT_LOGS_CODEX_STORE: "Codex のログの保存先",
   AI_CHAT_LOGS_REPO: "このリポジトリ",
   AI_CHAT_LOGS_BUN: "bun",
 };
