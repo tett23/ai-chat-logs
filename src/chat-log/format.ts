@@ -19,7 +19,8 @@ export const hitLines = (h: Hit): string => {
 // A message as text, or null when nothing of it is shown (docs/adr/0013).
 export const messageText = (m: Message, o: RenderOptions): string | null => {
   const body = m.blocks.map((b) => renderBlock(b, o)).filter((t): t is string => t !== null);
-  return body.length === 0 ? null : [`## #${m.index} ${m.role ?? "?"} ${m.timestamp ?? ""}`, ...body].join("\n");
+  const origin = [m.original_id ? `元ID: ${m.original_id}` : null, m.version ? `版: ${m.version}` : null].filter(Boolean).join(" ");
+  return body.length === 0 ? null : [`## #${m.index} ${m.role ?? "?"} ${m.timestamp ?? ""}`, ...(origin ? [origin] : []), ...body].join("\n");
 };
 
 export type Page = { from: number; to: number; total: number; center: number | null; previous: boolean };
@@ -69,6 +70,8 @@ export const messageJson = (m: Message, maxChars: number): Record<string, unknow
   role: m.role,
   model: m.model,
   is_sidechain: m.is_sidechain,
+  original_id: m.original_id,
+  version: m.version,
   blocks: m.blocks.map((b) => jsonBlock(b, maxChars)),
 });
 
