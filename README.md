@@ -67,9 +67,26 @@ bin/install
 ### リポジトリを更新したとき
 
 - `git pull` するだけでよい。スキーマの変更（マイグレーション）は、次の取り込みのときに自動で当たる。
-- スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。新しい `chat-log` と GUI はスキーマ 6 を要るので、入れなおす前か直後に取り込み（`bin/sync`）を1回走らせる。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
+- スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）へは、最初の取り込みで、いまある行をすべて変換する（84.5 万行で約40秒）。現在の必要なスキーマ版と更新手順は、次の「スキーマ 7 へ更新するとき」を参照。ファイルを縮めるには、[データベースを縮める](#データベースを縮める)。
 - `bin/install` でコマンドを入れている場合は、`bin/install` を実行しなおす。リポジトリを動かした場合も同じ。
 - `ecosystem.config.cjs` が変わったときは、`pm2 delete ai-chat-logs-sync`、`pm2 start ecosystem.config.cjs`、`pm2 save` で登録しなおす。
+
+### スキーマ 7 へ更新するとき
+
+スキーマ 7 は、Codex の会話を保存するためのビューと、提供元を区別する会話取得に対応する（[ADR 0033](docs/adr/0033-codex-conversation-database-migration.md)）。
+既存の記録、検索索引、要約は保持する。
+新しい `chat-log` と GUI はスキーマ 7 が必要になる。
+
+1. `pm2 stop ai-chat-logs-sync` で定期取り込みを止め、GUI からの取り込みも終了させる。
+2. SQLite のバックアップ機能で退避する。既定の DBなら `sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite '.backup /absolute/path/logs-before-v7.sqlite'` とする。稼働中の DB本体だけをコピーしない。
+3. 復旧用に旧 CLI と GUI を別の場所へ保存してから、新しい CLI と GUI をビルドし、インストールする。
+4. `bin/sync` を1回実行する。最初の取り込みでマイグレーションが適用される。
+5. 新しい GUI と `chat-log` で既存の会話と検索を確認し、`pm2 start ai-chat-logs-sync` で定期取り込みを再開する。
+
+移行後に旧バイナリを使わない。
+戻す場合はすべての取り込みと GUIを終了させ、バックアップと旧バイナリを対で復元する。
+復元先の DB 本体と WAL/SHMを別の退避先に移してから、バックアップを DBのパスに戻す。
+バックアップ後の記録は退避した DBと元ログから再取り込みする必要があるため、元ログも消さない。
 
 ### pm2 や Bun を入れなおしたとき
 
@@ -172,7 +189,7 @@ cp .env.example .env   # 使う行のコメントを外して値を書く
 
 ```sh
 sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
-  "SELECT timestamp, role, substr(content, 1, 80) FROM messages WHERE session_id = '<セッションID>' ORDER BY timestamp"
+  "SELECT timestamp, role, substr(content, 1, 80) FROM messages WHERE provider = '<提供元>' AND session_id = '<セッションID>' ORDER BY timestamp"
 ```
 
 表とビューは [docs/specifications.md](docs/specifications.md) を参照。
@@ -203,11 +220,12 @@ bun src/cli/chat-log.ts search 写し --cwd .          # 全文検索（結果�
 bun src/cli/chat-log.ts search 'uuid のみ' --tools --cwd .   # ツールの入出力（ファイルの編集など）も探す
 bun src/cli/chat-log.ts search 写し --exclude 写して --cwd .   # 語を除く
 bun src/cli/chat-log.ts export f0f40b1f > session.md   # セッションの全文を Markdown で書き出す
-bun src/cli/chat-log.ts show f0f40b1f --around 563   # その前後の10件を読む
+bun src/cli/chat-log.ts show f0f40b1f --provider claude-code --around 563   # その前後の10件を読む
 bun src/cli/chat-log.ts search pm2 --since 2026-10-01 --until 2026-10-08   # 期間で絞る
 ```
 
 - `bin/install` で `~/.local/bin/chat-log` に入る。
+- 会話は提供元と IDの組で識別する。`show` と `export` で IDが複数の提供元に一致したときは、`--provider claude-code` などで指定する。候補が無い場合は終了コード1、複数の場合は2になる。
 - 出力は短い決まった形のテキスト（`--json` で JSON Lines）。本文は既定で切りつめ、ツールの入出力は1行に要約し、思考は出さない（オプションで出せる）。
 - 抜粋は語ごとに一致した位置の前後で、すべての語の一致を `⟪ ⟫` で囲む（本文の `**` は Markdown の太字）。
 - AI に使わせるときは、作業の指示や `CLAUDE.md` に「過去の経緯は `chat-log --help` を読んで `chat-log` で調べる」と書いておく。
