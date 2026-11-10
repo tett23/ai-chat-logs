@@ -18,7 +18,7 @@ describe("scanMessage", () => {
     expect(scanMessage(result([], 0, 0))).toBe("新しいエクスポートはありません");
   });
 
-  test("reports a failed scan or import with the exit code", () => {
+  test("I6 reports a failed scan or import with the exit code, even after partial success", () => {
     expect(scanMessage(result([], 1, 0))).toBe("失敗しました（終了コード 1）");
     expect(scanMessage(result(["/a"], 0, 2))).toBe("失敗しました（終了コード 2）");
     expect(scanMessage(result([], null, 0))).toBe("失敗しました（終了コード なし）");

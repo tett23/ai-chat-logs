@@ -11,27 +11,35 @@ pub const DESKTOP_DIR: &str = "AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR";
 pub const CLAUDE_AI_DIR: &str = "AI_CHAT_LOGS_CLAUDE_AI_DIR";
 /// docs/adr/0010: where downloaded claude.ai exports are picked up.
 pub const CLAUDE_AI_INBOX: &str = "AI_CHAT_LOGS_CLAUDE_AI_INBOX";
+/// docs/adr/0032: where Codex writes local rollout files.
+pub const CODEX_DIR: &str = "AI_CHAT_LOGS_CODEX_DIR";
+/// docs/adr/0032: durable copies and converted conversation files.
+pub const CODEX_STORE: &str = "AI_CHAT_LOGS_CODEX_STORE";
 pub const REPO: &str = "AI_CHAT_LOGS_REPO";
 pub const BUN: &str = "AI_CHAT_LOGS_BUN";
 
 /// The settings shown and edited on the settings screen, in display order.
-pub const KEYS: [&str; 7] = [
+pub const KEYS: [&str; 9] = [
     DB,
     CLAUDE_CONFIG_DIR,
     DESKTOP_DIR,
     CLAUDE_AI_DIR,
     CLAUDE_AI_INBOX,
+    CODEX_DIR,
+    CODEX_STORE,
     REPO,
     BUN,
 ];
 
 /// Settings passed to the CLI commands as environment variables.
-pub const CLI_KEYS: [&str; 5] = [
+pub const CLI_KEYS: [&str; 7] = [
     DB,
     CLAUDE_CONFIG_DIR,
     DESKTOP_DIR,
     CLAUDE_AI_DIR,
     CLAUDE_AI_INBOX,
+    CODEX_DIR,
+    CODEX_STORE,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -98,6 +106,10 @@ pub fn resolve(layers: &Layers, repo_default: &Path, bun_default: Option<&Path>)
                 .clone()
                 .map(|d| text(d.join("ai-chat-logs/claude-ai"))),
             CLAUDE_AI_INBOX => home.clone().map(|h| text(h.join("Downloads"))),
+            CODEX_DIR => home.clone().map(|h| text(h.join(".codex"))),
+            CODEX_STORE => data_home
+                .clone()
+                .map(|d| text(d.join("ai-chat-logs/codex"))),
             REPO => Some(text(repo_default.to_path_buf())),
             BUN => bun_default.map(|b| text(b.to_path_buf())),
             _ => None,
@@ -297,6 +309,81 @@ mod tests {
             (get(BUN).value.unwrap(), get(BUN).origin),
             ("/conf/bun".into(), Origin::ConfigFile)
         );
+    }
+
+    #[test]
+    fn i3_codex_paths_follow_all_layers_and_defaults() {
+        let l = layers(
+            &[
+                ("HOME", "/home"),
+                ("XDG_DATA_HOME", "/data"),
+                ("AI_CHAT_LOGS_CODEX_DIR", "/env-codex"),
+                ("AI_CHAT_LOGS_CODEX_STORE", "/env-store"),
+            ],
+            &[
+                ("AI_CHAT_LOGS_CODEX_DIR", "/dot-codex"),
+                ("AI_CHAT_LOGS_CODEX_STORE", "/dot-store"),
+            ],
+            &[
+                ("AI_CHAT_LOGS_CODEX_DIR", "/config-codex"),
+                ("AI_CHAT_LOGS_CODEX_STORE", "/config-store"),
+            ],
+        );
+        let s = resolve(&l, Path::new("/repo"), None);
+        assert_eq!(value(&s, "AI_CHAT_LOGS_CODEX_DIR"), Some("/env-codex"));
+        assert_eq!(value(&s, "AI_CHAT_LOGS_CODEX_STORE"), Some("/env-store"));
+        assert_eq!(
+            s.iter().find(|s| s.key == CODEX_DIR).unwrap().origin,
+            Origin::Environment
+        );
+        let from_dotenv = resolve(
+            &layers(
+                &[("HOME", "/home")],
+                &[(CODEX_DIR, "/dot-codex")],
+                &[(CODEX_DIR, "/config-codex")],
+            ),
+            Path::new("/repo"),
+            None,
+        );
+        assert_eq!(value(&from_dotenv, CODEX_DIR), Some("/dot-codex"));
+        assert_eq!(
+            from_dotenv
+                .iter()
+                .find(|s| s.key == CODEX_DIR)
+                .unwrap()
+                .origin,
+            Origin::EnvFile
+        );
+        let from_config = resolve(
+            &layers(&[("HOME", "/home")], &[], &[(CODEX_STORE, "/config-store")]),
+            Path::new("/repo"),
+            None,
+        );
+        assert_eq!(value(&from_config, CODEX_STORE), Some("/config-store"));
+        assert_eq!(
+            from_config
+                .iter()
+                .find(|s| s.key == CODEX_STORE)
+                .unwrap()
+                .origin,
+            Origin::ConfigFile
+        );
+        let defaults = resolve(
+            &layers(&[("HOME", "/home"), ("XDG_DATA_HOME", "/data")], &[], &[]),
+            Path::new("/repo"),
+            None,
+        );
+        assert_eq!(
+            value(&defaults, "AI_CHAT_LOGS_CODEX_DIR"),
+            Some("/home/.codex")
+        );
+        assert_eq!(
+            value(&defaults, "AI_CHAT_LOGS_CODEX_STORE"),
+            Some("/data/ai-chat-logs/codex")
+        );
+        let saved = update_config("", CODEX_DIR, Some("/other")).unwrap();
+        assert_eq!(saved, "AI_CHAT_LOGS_CODEX_DIR=\"/other\"\n");
+        assert_eq!(update_config(&saved, CODEX_DIR, Some("")).unwrap(), "");
     }
 
     #[test]

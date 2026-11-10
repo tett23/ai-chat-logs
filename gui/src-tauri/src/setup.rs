@@ -275,6 +275,8 @@ mod tests {
             setting(settings::DESKTOP_DIR, "/h/desk"),
             setting(settings::CLAUDE_AI_DIR, "/d/claude-ai"),
             setting(settings::CLAUDE_AI_INBOX, "/h/Downloads"),
+            setting(settings::CODEX_DIR, "/h/.codex"),
+            setting(settings::CODEX_STORE, "/d/codex"),
             setting(settings::REPO, "/repo"),
             setting(settings::BUN, "/tools/bin/bun"),
         ]
@@ -316,6 +318,8 @@ mod tests {
                     settings::CLAUDE_AI_INBOX.to_string(),
                     "/h/Downloads".to_string()
                 ),
+                (settings::CODEX_DIR.to_string(), "/h/.codex".to_string()),
+                (settings::CODEX_STORE.to_string(), "/d/codex".to_string()),
             ]
         );
     }
@@ -409,6 +413,45 @@ mod tests {
                 (settings::DESKTOP_DIR.to_string(), PathKind::Missing),
             ]
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn i4_checking_codex_paths_does_not_change_files() {
+        let dir =
+            std::env::temp_dir().join(format!("ai-chat-logs-codex-check-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let input = dir.join("input.jsonl");
+        let config = dir.join("config.env");
+        let db = dir.join("logs.sqlite");
+        std::fs::write(&input, b"codex rollout").unwrap();
+        std::fs::write(&config, b"AI_CHAT_LOGS_CODEX_DIR=/codex").unwrap();
+        std::fs::write(&db, b"database").unwrap();
+        let before = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>();
+        let s = vec![
+            setting(settings::CODEX_DIR, dir.to_str().unwrap()),
+            setting(settings::CODEX_STORE, dir.join("absent").to_str().unwrap()),
+            setting(settings::DB, db.to_str().unwrap()),
+        ];
+        let checked = check_paths(&s);
+        assert_eq!(
+            checked.iter().map(|c| &c.kind).collect::<Vec<_>>(),
+            [&PathKind::Directory, &PathKind::Missing, &PathKind::File]
+        );
+        assert_eq!(std::fs::read(&input).unwrap(), b"codex rollout");
+        assert_eq!(
+            std::fs::read(&config).unwrap(),
+            b"AI_CHAT_LOGS_CODEX_DIR=/codex"
+        );
+        assert_eq!(std::fs::read(&db).unwrap(), b"database");
+        let after = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(before, after);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

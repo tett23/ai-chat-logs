@@ -2,6 +2,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import * as api from "./api.ts";
 import { clear, h } from "./dom.ts";
+import { importGate } from "./import-gate.ts";
 
 const LABELS: Record<string, string> = {
   AI_CHAT_LOGS_DB: "データベース",
@@ -9,6 +10,8 @@ const LABELS: Record<string, string> = {
   AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR: "デスクトップアプリのディレクトリ",
   AI_CHAT_LOGS_CLAUDE_AI_DIR: "claude.ai のエクスポートの保存先",
   AI_CHAT_LOGS_CLAUDE_AI_INBOX: "claude.ai のエクスポートの受け取り用のディレクトリ",
+  AI_CHAT_LOGS_CODEX_DIR: "Codex のログディレクトリ",
+  AI_CHAT_LOGS_CODEX_STORE: "Codex のログの保存先",
   AI_CHAT_LOGS_REPO: "このリポジトリ",
   AI_CHAT_LOGS_BUN: "bun",
 };
@@ -135,11 +138,13 @@ const renderSetup = (container: HTMLElement, onChanged: () => void): void => {
   const status = h("p", { class: "mt-2 text-sm text-gray-600" });
   const buttons: HTMLButtonElement[] = [];
   const run = (label: string, task: () => Promise<api.RunResult | null>) => {
-    buttons.forEach((b) => (b.disabled = true));
+    if (importGate.running()) return;
     status.textContent = `${label}: 実行中…`;
     output.classList.add("hidden");
-    task()
-      .then((r) => {
+    importGate.run(task)
+      .then((result) => {
+        if (!result.started) return;
+        const r = result.value;
         if (r === null) {
           status.textContent = "";
           return;
@@ -151,8 +156,7 @@ const renderSetup = (container: HTMLElement, onChanged: () => void): void => {
       })
       .catch((e) => {
         status.textContent = `${label}: ${storeErrorText(e)}`;
-      })
-      .finally(() => buttons.forEach((b) => (b.disabled = false)));
+      });
   };
   buttons.push(
     button("取り込む", () => run("取り込み", api.runSync)),
@@ -163,6 +167,7 @@ const renderSetup = (container: HTMLElement, onChanged: () => void): void => {
       }),
     ),
   );
+  importGate.subscribe((running) => buttons.forEach((b) => (b.disabled = running)));
   clear(
     container,
     message("取り込みは、データベースが無ければ作ってから、履歴の差分を取り込みます。初回は数十秒から数分かかります。"),

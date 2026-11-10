@@ -148,11 +148,20 @@ ai-chat-logs の現行の仕様をまとめる。
 - 書き出し：会話の欄の上端の「書き出す」ボタン（セッションを開いているときだけ押せる）で保存先を選ぶと（既定のファイル名は `<タイトル>.md`。`/` と `:` は `-`、タイトルが無ければセッションID）、`<AI_CHAT_LOGS_REPO>/src/cli/chat-log.ts export <セッションID>` を取り込みと同じ環境で `bun` で実行し、標準出力を保存先と同じディレクトリの一時ファイルに書いてから置きかえる。失敗したら一時ファイルを消し、終了コードと標準エラー出力の最後の20行を出す（[ADR 0026](adr/0026-export-sessions-and-highlight-terms.md)）。
 - 検索の語句の強調：検索の結果から開いた会話では、そのときの検索の語句（空白で分けたもの）を、テキストと開いた思考の本文（コードブロックの中を含む）で `<mark>` で強調する。ASCII の大文字と小文字を区別せず、重なる・隣りあう一致は1つにまとめる。ツールのブロックと見出しは強調しない。一覧から開いたときは強調しない（[ADR 0026](adr/0026-export-sessions-and-highlight-terms.md)）。
 - 「表示」のメニュー：thinking、tool_use、tool_result のチェックボックス（既定ですべて入る）。外した種類のブロックを隠し、出すブロックが無くなったメッセージは見出しごと隠す（ブロックの無いメッセージは隠さない。番号は変えない）。テキストと「その他」のブロックは隠せない。検索の結果から開いて強調するメッセージは、メッセージも中のブロックも隠さない。状態は WebView の `localStorage`（`ai-chat-logs:shown`）に保存し、読めなければすべて入った状態にする（[ADR 0024](adr/0024-gui-conversation-header-and-block-filter.md)）。
-- プロジェクトの絞り込み：Claude Code は `cwd` ごと、ほかの提供元は提供元ごとに1項目。一覧と検索の結果に、Claude Code 以外の提供元の名前を出す。
+- プロジェクトの絞り込み：Claude Code と Codex は `cwd` ごと、ほかの提供元は提供元ごとに1項目。
+  一覧と検索の結果には、Claude Code を含むすべての提供元の名前を出す。
 - 閲覧の画面の、プロジェクトの絞り込みの下に「ダウンロードしたエクスポートを取り込む」（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)）。コマンド `scan_claude_ai_exports` で `claude-ai-export-scan` と `bin/sync` を実行し、結果（取り込んだ件数、新しいものが無い旨、失敗と終了コード）を短く出し、詳しい出力を折りたたんで出す。終わったらプロジェクトの絞り込み（選択は保つ）とセッションの一覧を読みなおし、開いている会話はそのままにする。ボタンの `title` に受け取り用のディレクトリを出す。
 - 検索：空白で区切った語のうち、3文字以上の語は二重引用符で囲んだ FTS5 の語として AND でつなぎ、3文字未満の語は `LIKE`（`%`、`_`、`\` をエスケープ）で絞る。抜粋は、FTS5 の `snippet()`、3文字未満の語だけのときは本文から最初の一致の前後32文字を切り出したもの。強調は U+E000 と U+E001 で囲む。
 - `get_messages` のブロックのうち、`thinking`、`tool_use`、`tool_result`、その他の本文は、4,000 文字を超えたら先頭の 4,000 文字と元の文字数を返す。
 - 画面：本文はプレーンテキスト。` ``` ` で囲まれた部分だけ等幅にする。`thinking`、`tool_use`、`tool_result`、サイドチェーンのレコードは折りたたみ、開いたときに中身を組み立てる。文字列は HTML として解釈させない。
+
+### Codex の表示
+
+[ADR 0032](adr/0032-codex-import-ui-and-provider-labels.md)
+
+- 一覧、検索結果、ヘッダーの表示名は Claude Code、claude.ai、Cowork、Codex。未知の提供元は内部識別子を表示する。タイトルは書き換えない。
+- Codex の選択肢は作業ディレクトリ単位。`cwd_missing` が真なら値なしの会話だけを選ぶ。偽または省略は従来どおりで、非 NULL の `cwd`と同時に真を指定した場合は入力エラーにする。
+- 取り込みはGUI 全体で同時に1件だけ。画面切り替え後も排他を維持する。環境の検査だけでは入力、設定、DBを変更しない。
 
 ## 定期実行
 
@@ -193,10 +202,18 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 場所：`AI_CHAT_LOGS_CONFIG`、無ければ `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env`。書式は `.env` と同じ。
 - 優先順位：環境変数、`.env`、設定ファイル、既定。CLI、`ecosystem.config.cjs`、GUI のすべてが、この順で読む。
-- GUI の管理画面が書くのは設定ファイルだけ。項目は `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_INBOX`、`AI_CHAT_LOGS_REPO`、`AI_CHAT_LOGS_BUN`。
+- GUI の管理画面が書くのは設定ファイルだけ。項目は `AI_CHAT_LOGS_DB`、`CLAUDE_CONFIG_DIR`、`AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_DIR`、`AI_CHAT_LOGS_CLAUDE_AI_INBOX`、`AI_CHAT_LOGS_CODEX_DIR`、`AI_CHAT_LOGS_CODEX_STORE`、`AI_CHAT_LOGS_REPO`、`AI_CHAT_LOGS_BUN`。
 - 書き方：`名前="値"`（`\` と `"` を逃がす）。改行を含む値は保存しない。最初の行を書きかえ、同じ名前の2行目以降を消す。空の値で保存するとその名前の行を消す。ほかの行は残す。一時ファイルから名前を変えて置きかえる。
 - `AI_CHAT_LOGS_CLAUDE_DESKTOP_DIR`（既定は `~/Library/Application Support/Claude`）は、CLI の列挙でも使う。`AI_CHAT_LOGS_REPO`（既定は GUI をビルドしたリポジトリ）と `AI_CHAT_LOGS_BUN` は GUI だけが使う。
 - GUI の `bun` の探し方：`AI_CHAT_LOGS_BUN`、`PATH`、`~/.bun/bin/bun`、`~/.local/share/mise/shims/bun`、`/opt/homebrew/bin/bun`、`/usr/local/bin/bun` の順で、最初に実行できるもの。
+
+### Codex の設定
+
+[ADR 0032](adr/0032-codex-import-ui-and-provider-labels.md)
+
+- `AI_CHAT_LOGS_CODEX_DIR` の既定は `~/.codex`、`AI_CHAT_LOGS_CODEX_STORE` の既定は `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/codex`。CLI と GUI は同じ優先順位で解決する。
+- GUI は新しい2項目を、既存と同じ設定行と環境の検査に追加する。上位の設定による上書きを表示し、空欄保存では設定ファイルのキーだけを除く。
+
 
 ## 管理画面
 
