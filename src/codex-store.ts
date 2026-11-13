@@ -62,7 +62,7 @@ const manifestAt = (directory: string): Manifest | null => {
   } catch { return null; }
 };
 
-const save = (path: string, store: string, afterWrite: (name: string) => void): { directory: string; published: boolean; manifest: Manifest; warnings: string[] } => {
+export const saveCodexSnapshot = (path: string, store: string, afterWrite: (name: string) => void = () => {}): { directory: string; published: boolean; manifest: Manifest; warnings: string[] } => {
   const bytes = readCodexSnapshot(path);
   const hash = sha256(bytes), directory = join(store, hash);
   const existing = manifestAt(directory);
@@ -100,7 +100,7 @@ export const convertCodexLogs = (codexRoot: string, store: string, afterWrite: (
   catch (error) { return { ...result, status: 1, errors: [String(error)] }; }
   for (const path of paths) {
     try {
-      const saved = save(resolve(path), resolve(store), afterWrite);
+      const saved = saveCodexSnapshot(resolve(path), resolve(store), afterWrite);
       result.directories.push(saved.directory);
       if (saved.published) result.published++;
       if (saved.manifest.status === 1) result.status = 1;
@@ -113,6 +113,11 @@ export const convertCodexLogs = (codexRoot: string, store: string, afterWrite: (
   return result;
 };
 
+export const codexSnapshotSources = (directory: string): CodexSource[] => [
+  { kind: "codex/conversation", path: join(directory, "messages-v1.jsonl") },
+  { kind: "codex/rollout", path: join(directory, "rollout.jsonl") },
+];
+
 export const listCodexSources = (store: string): CodexSource[] => {
   let entries;
   try { entries = readdirSync(store, { withFileTypes: true }); }
@@ -120,9 +125,6 @@ export const listCodexSources = (store: string): CodexSource[] => {
   return entries.filter((entry) => entry.isDirectory() && isHash(entry.name))
     .flatMap((entry): CodexSource[] => {
       const directory = join(resolve(store), entry.name);
-      return manifestAt(directory) ? [
-        { kind: "codex/conversation", path: join(directory, "messages-v1.jsonl") },
-        { kind: "codex/rollout", path: join(directory, "rollout.jsonl") },
-      ] : [];
+      return manifestAt(directory) ? codexSnapshotSources(directory) : [];
     }).sort((a, b) => a.kind.localeCompare(b.kind) || a.path.localeCompare(b.path));
 };
