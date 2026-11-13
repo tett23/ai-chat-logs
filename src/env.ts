@@ -19,13 +19,13 @@ export const configFilePath = (env: Env): string | null => {
 };
 
 // Load the env file, then the config file, into process.env without overriding; exit 2 on a syntax error.
-export const loadEnvFile = (): void => {
+export const loadEnvFile = (failureCode = 2): void => {
   try {
     loadDotenv(envFilePath(process.env), process.env);
     const config = configFilePath(process.env);
     if (config) loadDotenv(config, process.env);
   } catch (e) {
     console.error(e instanceof Error ? e.message : String(e));
-    process.exit(2);
+    process.exit(failureCode);
   }
 };

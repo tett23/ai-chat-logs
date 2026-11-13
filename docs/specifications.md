@@ -293,3 +293,7 @@ ai-chat-logs の現行の仕様をまとめる。
 ## Codex の毎時収集
 
 [ADR 0036](adr/0036-codex-hourly-collection.md) に従い、全提供元の4時間ごとの取り込みとは別に、既定で毎時30分に Codex を収集する。専用ジョブは変換後に Codex の入力だけを列挙し、列挙に成功した場合だけ取り込む。変換に失敗しても公開済みの入力を取り込み、失敗を終了コードで知らせる。専用ジョブでは行方不明の入力を判定しない。
+
+## 圧縮直前の取り込み
+
+Codex と Claude Code の手動・自動圧縮時に、`ai-chat-logs-precompact codex` または `ai-chat-logs-precompact claude-code` が標準入力の `transcript_path` で指定された通常ファイルを取り込む。Codex は sessions と archived_sessions 以下の JSONL の完成行をスナップショットに保存し、原本と検索用メッセージを SQLite に取り込む。Claude Code は projects 以下の transcript を定期取り込みと同じ位置から最後の改行まで取り込む。他のソースの欠落状態を変更しない。標準出力は空で、成功時は 0、失敗時は理由を標準エラーに出して 1 を返す（[ADR 0038](adr/0038-save-logs-before-compaction.md)）。

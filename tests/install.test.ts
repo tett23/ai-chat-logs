@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-sync", "ai-chat-logs-codex-sync"];
+const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-precompact", "ai-chat-logs-sync", "ai-chat-logs-codex-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>
@@ -44,6 +44,21 @@ describe("bin/install", () => {
     expect(listed.stdout.toString().split("\n").filter(Boolean)).toHaveLength(2);
     expect(run("codex-log-convert", env, undefined, ["unexpected"]).exitCode).toBe(2);
     expect(run("codex-log-sources", env, undefined, ["unexpected"]).exitCode).toBe(2);
+  });
+
+  test("H1 installed precompact imports a transcript without Bun on PATH", () => {
+    const home = tempDir();
+    const path = writeFile(join(home, ".claude/projects/p/s.jsonl"), jsonl({ type: "user", sessionId: "s" }));
+    const dbPath = join(home, "out.sqlite");
+    const result = Bun.spawnSync([join(prefix, "ai-chat-logs-precompact"), "claude-code"], {
+      env: isolatedEnv({ PATH: "/usr/bin:/bin", HOME: home, AI_CHAT_LOGS_DB: dbPath }),
+      stdin: Buffer.from(JSON.stringify({ hook_event_name: "PreCompact", transcript_path: path, trigger: "manual" })),
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.length).toBe(0);
+    const db = new Database(dbPath, { readonly: true });
+    expect(db.query("SELECT path FROM sources").get()).toEqual({ path });
+    db.close();
   });
 
   test("does not read .env in the working directory", () => {

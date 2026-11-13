@@ -141,6 +141,24 @@ codex-log-sources | chat-log-import
 単独の Codex 列挙に `--mark-missing` を付けると、Claude の入力を見つからないものとして記録するため、付けない。
 全提供元をまとめて処理するときは `bin/sync` を使う。
 
+## コンテキスト圧縮の直前に取り込む
+
+`bin/install` を実行すると、`ai-chat-logs-precompact` がインストールされる。このコマンドを `PreCompact` フックに登録すると、手動の `/compact` と自動圧縮の直前に、その会話の書き込み済みの行を取り込む。取り込んだ発言はすぐに `chat-log search` で検索できる（[ADR 0038](docs/adr/0038-save-logs-before-compaction.md)）。
+
+Codex では、次の設定を `~/.codex/hooks.json` に追加する。すでにフックを登録している場合は `PreCompact` の配列に項目を足す。
+
+```json
+{
+  "hooks": {
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "\"$HOME/.local/bin/ai-chat-logs-precompact\" codex" }] }
+    ]
+  }
+}
+```
+
+Claude Code では、同じ設定を `~/.claude/settings.json` に追加し、コマンドの末尾の引数を `claude-code` にする。インストール先を変えた場合はコマンドのパスも合わせる。登録後、Codex の起動時にフックの確認画面が出たら、登録したコマンドを確認して信頼する。各ツールの新しいセッションで一度発言し、`/compact` の後でその発言を検索して確かめる。
+
 ## 使い方
 
 ### 1回だけ取り込む
