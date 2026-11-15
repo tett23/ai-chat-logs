@@ -1,6 +1,6 @@
 # ADR 0010: ダウンロードした claude.ai のエクスポートを自動で取り込む
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

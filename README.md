@@ -332,7 +332,7 @@ ChatGPT のエクスポートは未対応である。
 
 ## 開発
 
-クローン後、gitのhookを有効化する。コミット済みのADRの変更は [adr-guard](https://github.com/tett23/adr-guard) で拒否する。ただし、ステータスの行とリンクだけの変更は許可する（[ADR 0009](docs/adr/0009-update-adr-guard-to-v0-8-2.md)、[ADR 0012](docs/adr/0012-update-adr-guard-to-v0-8-3.md)、[ADR 0028](docs/adr/0028-update-adr-guard-to-v0-10-0.md)）。
+クローン後、gitのhookを有効化する。コミット済みのADRの変更は [adr-guard](https://github.com/tett23/adr-guard) で拒否する。ただし、ステータスの行とリンクだけの変更は許可する（[ADR 0009](docs/adr/0009-update-adr-guard-to-v0-8-2.md)、[ADR 0012](docs/adr/0012-update-adr-guard-to-v0-8-3.md)、[ADR 0028](docs/adr/0028-update-adr-guard-to-v0-10-0.md)、[ADR 0039](docs/adr/0039-update-adr-guard-to-v0-13-1.md)）。
 
 ```sh
 git config core.hooksPath .githooks
@@ -342,16 +342,24 @@ git config core.hooksPath .githooks
 
 設計判断は `docs/adr/` にADRとして記録する。仕様は [docs/specifications.md](docs/specifications.md) を参照。
 
-ADR のステータスは次のように移る（[ADR 0015](docs/adr/0015-distinguish-accepted-and-unimplemented-adrs.md)）。
+ADR のステータスは、3行目の `Status:` の行に書き、次のように移る（[ADR 0015](docs/adr/0015-distinguish-accepted-and-unimplemented-adrs.md)、[ADR 0039](docs/adr/0039-update-adr-guard-to-v0-13-1.md)）。
 
 | 値 | 意味 |
 |---|---|
-| `提案` | レビュー待ち。コミットしない |
-| `採択（未実装）` | 採択した。実装はまだ main に入っていない。`adr-guard unimplemented` で一覧できる |
-| `採択` | 実装が main に入った（実装の要らない ADR は採択した時点で `採択`） |
-| `採択→<変わった部分>は ADR NNNN` | 一部が後の ADR で変わった |
+| `Status: proposed` | 提案した。レビューを受けたあと、この値で一度コミットする |
+| `Status: accepted-pending` | 採択した。実装はまだ main に入っていない。`adr-guard unimplemented` で一覧できる |
+| `Status: accepted` | 実装が main に入った（実装の要らない ADR は採択した時点で `accepted`） |
+| `Status: superseded [...]` | 一部または全部が後の ADR で変わった。変わった部分と、変えた ADR のパスを JSON で書く |
+| `Status: superseded-pending [...]` | 実装を待つ ADR の一部または全部が、後の ADR で変わった |
+| `Status: rejected`、`Status: discarded` | 却下した、破棄した |
 
-- 採択した ADR は `採択（未実装）` でコミットし、実装の PR でステータスを `採択` にする。実装を複数の PR に分けるときは、最後の PR で変える。
+1. ADR を書き、`Status: proposed` のまま、コミットせずにレビューを受ける。
+2. レビューで認められたら、`Status: proposed` のままコミットする。
+3. 続くコミットで、実装の要る ADR は `accepted-pending`、実装の要らない ADR は `accepted` にする。
+4. 実装の PR に、その ADR のステータスを `accepted-pending` から `accepted` にする変更を含める。実装を複数の PR に分けるときは、最後の PR で変える。
+
+却下した ADR を記録として残すときは、`Status: proposed` でコミットし、続くコミットで `rejected` にする。
+pre-commit の hook と CI は、ステータスの状態遷移を検査する。
 
 ## License
 

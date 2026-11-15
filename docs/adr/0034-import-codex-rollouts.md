@@ -1,6 +1,6 @@
 # ADR 0034: Codex のローカルログを取り込む
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

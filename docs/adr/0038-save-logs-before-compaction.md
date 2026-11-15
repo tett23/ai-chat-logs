@@ -1,6 +1,6 @@
 # ADR 0038: Codex と Claude Code のコンテキスト圧縮直前に会話ログを保存する
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

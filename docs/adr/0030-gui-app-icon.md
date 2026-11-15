@@ -1,6 +1,6 @@
 # ADR 0030: GUI のアプリのアイコン
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

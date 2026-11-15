@@ -1,6 +1,6 @@
 # ADR 0004: .env から環境変数を読む
 
-ステータス: 採択→設定ファイルからの読み込みは[ADR 0007](0007-settings-and-setup-screen.md)、実行ファイルでのリポジトリの場所は[ADR 0008](0008-install-compiled-commands.md)
+Status: superseded [{"by":["docs/adr/0007-settings-and-setup-screen.md"],"part":"設定ファイルからの読み込み"},{"by":["docs/adr/0008-install-compiled-commands.md"],"part":"実行ファイルでのリポジトリの場所"}]
 
 ## 文脈
 

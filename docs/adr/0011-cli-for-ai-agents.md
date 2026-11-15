@@ -1,6 +1,6 @@
 # ADR 0011: AI のエージェントが履歴を引くための CLI
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 
