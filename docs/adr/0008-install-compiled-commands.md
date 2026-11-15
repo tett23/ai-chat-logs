@@ -1,6 +1,6 @@
 # ADR 0008: コマンドを実行ファイルにビルドして ~/.local/bin に入れる
 
-ステータス: 採択→claude-ai-export-scan のインストールは[ADR 0010](0010-scan-downloads-for-claude-ai-exports.md)、chat-log のインストールは[ADR 0011](0011-cli-for-ai-agents.md)
+Status: superseded [{"by":["docs/adr/0010-scan-downloads-for-claude-ai-exports.md"],"part":"claude-ai-export-scan のインストール"},{"by":["docs/adr/0011-cli-for-ai-agents.md"],"part":"chat-log のインストール"}]
 
 ## 文脈
 

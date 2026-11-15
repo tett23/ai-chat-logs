@@ -1,6 +1,6 @@
 # ADR 0021: chat-log search でツールの入出力も探せるようにする
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 

@@ -1,6 +1,6 @@
 # ADR 0015: ADR のステータスで「採択」と「採択（未実装）」を区別する
 
-ステータス: 採択
+Status: superseded [{"part":"ステータスの値と移り方","by":["docs/adr/0039-update-adr-guard-to-v0-13-1.md"]}]
 
 ## 文脈
 

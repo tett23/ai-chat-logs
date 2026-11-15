@@ -1,6 +1,6 @@
 # ADR 0003: Tauri で履歴を閲覧・検索する GUI を作る
 
-ステータス: 採択→データベースの既定の場所と実装の細部は[ADR 0005](0005-log-viewer-corrections-and-details.md)、提供元での絞り込みと表示は[ADR 0006](0006-import-cowork-and-claude-ai-chats.md)、設定画面と取り込みの実行は[ADR 0007](0007-settings-and-setup-screen.md)、閲覧の画面のエクスポートの取り込みのボタンは[ADR 0010](0010-scan-downloads-for-claude-ai-exports.md)
+Status: superseded [{"by":["docs/adr/0005-log-viewer-corrections-and-details.md"],"part":"データベースの既定の場所と実装の細部"},{"by":["docs/adr/0006-import-cowork-and-claude-ai-chats.md"],"part":"提供元での絞り込みと表示"},{"by":["docs/adr/0007-settings-and-setup-screen.md"],"part":"設定画面と取り込みの実行"},{"by":["docs/adr/0010-scan-downloads-for-claude-ai-exports.md"],"part":"閲覧の画面のエクスポートの取り込みのボタン"}]
 
 ## 文脈
 

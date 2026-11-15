@@ -1,6 +1,6 @@
 # ADR 0036: Codex のログを1時間ごとに収集する
 
-ステータス: 採択
+Status: accepted
 
 ## 文脈
 
