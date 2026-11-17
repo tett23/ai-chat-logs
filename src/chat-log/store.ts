@@ -16,7 +16,11 @@ export const isExitError = (e: unknown): e is ExitError =>
 
 export const openReadOnly = (path: string): Database => {
   if (!existsSync(path)) throw exitError(2, `データベースが見つかりません: ${path}。取り込み（bin/sync か ai-chat-logs-sync）を実行してください。`);
-  const db = new Database(path, { readonly: true });
+  // docs/adr/0045: a read-only connection cannot open a WAL database whose -wal file is gone (sqlite3 removes
+  // it when it closes last); a read-write connection without create, with query_only, can and never writes.
+  const db = new Database(path, { readwrite: true, create: false });
+  db.run("PRAGMA query_only = ON");
+  db.run("PRAGMA busy_timeout = 10000");
   const version = db.query<{ v: number }, []>("SELECT user_version v FROM pragma_user_version").get()?.v ?? 0;
   if (version < REQUIRED_SCHEMA_VERSION) {
     db.close();

@@ -296,7 +296,7 @@ pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
 
 - `VACUUM` は、データベースと同じくらいの空き容量を一時的に使う。
 - 2026-11-08 の手元のデータベース（7.78 GB、84.5 万行）では、移行の変換が 38 秒、その後の `VACUUM INTO` が 10 秒かかり、5.33 GB になった（`records` が 5,767 MB から 2,359 MB に、`payloads` が 1,156 MB）。
-- GUI は読み取り専用で開くので、`VACUUM` の間は開いていてもよいが、待たされることがある。
+- GUI は書き込まない接続（query_only）で開くので、`VACUUM` の間は開いていてもよいが、待たされることがある。
 
 Codex の古いコピー（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残したもの）を除いてから縮めるときは、「Codex の古いコピーを除く」の手順で、取り込みを止める、`codex-store-dedupe --dry-run`、`codex-store-dedupe`、`VACUUM`、取り込みを再開する、の順に実行する。
 
@@ -330,7 +330,7 @@ bun src/cli/chat-log.ts export --message 98d7f31b   # メッセージ1つを Mar
 
 ### 閲覧・検索する（GUI）
 
-`gui/` に、履歴を閲覧・検索する Tauri のアプリがある。データベースは読み取り専用で開くため、pm2 の取り込みと同時に使える。
+`gui/` に、履歴を閲覧・検索する Tauri のアプリがある。データベースは書き込まない接続（query_only）で開くため、pm2 の取り込みと同時に使える（[ADR 0045](docs/adr/0045-open-wal-database-without-wal-file-for-reading.md)）。
 
 ```sh
 cd gui

@@ -191,8 +191,13 @@ pub fn database_size(path: &Path) -> Option<u64> {
     Some(main + side)
 }
 
+// docs/adr/0045
+fn open_for_stats(path: &Path) -> rusqlite::Result<Connection> {
+    crate::store::open_query_only(path, OpenFlags::empty())
+}
+
 fn database_stats(path: &Path) -> rusqlite::Result<DatabaseCheck> {
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let conn = open_for_stats(path)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     let count = |sql: &str| conn.query_row(sql, [], |r| r.get::<_, i64>(0)).ok();
     let last_run = conn
@@ -500,6 +505,28 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(before, after);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn adr0045_i5_i6_database_stats_without_wal_files() {
+        for missing in ["both", "wal", "shm"] {
+            let path = crate::store::scratch_path("stats");
+            {
+                let conn = Connection::open(&path).unwrap();
+                conn.execute_batch(include_str!("../../../schema/0001-initial.sql"))
+                    .unwrap();
+                conn.execute_batch("PRAGMA user_version = 1").unwrap();
+            }
+            crate::store::with_wal_files_missing(&path, missing);
+            let stats = database_stats(&path).unwrap_or_else(|e| panic!("{missing}: {e:?}"));
+            assert_eq!(stats.schema_version, Some(1), "{missing}");
+            let conn = open_for_stats(&path).unwrap();
+            assert!(
+                conn.execute("INSERT INTO runs (started_at) VALUES ('x')", [])
+                    .is_err(),
+                "{missing}"
+            );
+        }
     }
 
     #[test]

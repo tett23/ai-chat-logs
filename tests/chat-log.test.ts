@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabase } from "../src/db.ts";
 import { importSources, type SourceEntry } from "../src/import.ts";
@@ -262,9 +263,11 @@ describe("chat-log context", () => {
 });
 
 describe("chat-log errors and help", () => {
-  test("a missing or old database exits 2", () => {
-    const missing = chatLog(["sessions"], { env: { AI_CHAT_LOGS_DB: join(tempDir(), "none.sqlite") } });
+  test("ADR 0045 I7: a missing or old database exits 2", () => {
+    const none = join(tempDir(), "none.sqlite");
+    const missing = chatLog(["sessions"], { env: { AI_CHAT_LOGS_DB: none } });
     expect(missing.code).toBe(2);
+    expect(existsSync(none)).toBe(false);
     const oldPath = join(tempDir(), "old.sqlite");
     const old = openDatabase(oldPath);
     old.run("PRAGMA user_version = 2");
@@ -651,4 +654,49 @@ describe("chat-log help split by subcommand (docs/adr/0042)", () => {
     expect(r.code).toBe(2);
     expect(r.err.trimEnd().split("\n").at(-1)).toBe(last as string);
   });
+});
+
+describe("chat-log without WAL files (docs/adr/0045)", () => {
+  // A copy of the fixture database with its WAL checkpointed, so that WAL files can be removed safely.
+  const walCopy = (missing: "both" | "wal" | "shm" | "none"): string => {
+    const path = join(tempDir(), "logs.sqlite");
+    const src = new Database(dbPath, { readonly: true });
+    src.run(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+    src.close();
+    const db = new Database(path);
+    db.run("PRAGMA journal_mode = WAL");
+    db.query("SELECT count(*) FROM records").get();
+    db.run("PRAGMA wal_checkpoint(TRUNCATE)");
+    db.close();
+    const files = { both: ["-wal", "-shm"], wal: ["-wal"], shm: ["-shm"], none: [] }[missing];
+    files.forEach((suffix) => rmSync(`${path}${suffix}`, { force: true }));
+    if (missing === "wal" && !existsSync(`${path}-shm`)) writeFile(`${path}-shm`, "");
+    if (missing === "shm" && !existsSync(`${path}-wal`)) writeFile(`${path}-wal`, "");
+    return path;
+  };
+  const state = (path: string) => {
+    const db = new Database(path, { readwrite: true, create: false });
+    db.run("PRAGMA query_only = ON");
+    const rows = db.query("SELECT rowid, raw FROM records ORDER BY rowid").all();
+    const meta = db.query("SELECT (SELECT user_version FROM pragma_user_version) v, (SELECT journal_mode FROM pragma_journal_mode) j").get();
+    db.close();
+    return { rows, meta };
+  };
+
+  test.each(["both", "wal", "shm"] as const)("ADR 0045 I1, I3: chat-log reads the database when %s is missing", (missing) => {
+    const expected = chatLog(["sessions"], { env: { AI_CHAT_LOGS_DB: walCopy("none") } });
+    const path = walCopy(missing);
+    const before = state(walCopy(missing));
+    const r = chatLog(["sessions"], { env: { AI_CHAT_LOGS_DB: path } });
+    expect(r.code).toBe(0);
+    expect(r.out).toBe(expected.out);
+    expect(state(path)).toEqual(before);
+  }, 60_000);
+
+  test("ADR 0045 I2: the connection of openReadOnly refuses writes", async () => {
+    const { openReadOnly } = await import("../src/chat-log/store.ts");
+    const db = openReadOnly(walCopy("both"));
+    expect(() => db.run("INSERT INTO runs (started_at) VALUES ('x')")).toThrow();
+    db.close();
+  }, 60_000);
 });
