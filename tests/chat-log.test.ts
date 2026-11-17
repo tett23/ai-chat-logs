@@ -279,7 +279,8 @@ describe("chat-log errors and help", () => {
   });
 
   test("--help covers the subcommands, output formats, exit codes and the suggested order", () => {
-    const help = chatLog(["--help"]).out;
+    // docs/adr/0042: the common options moved to each subcommand's help.
+    const help = chatLog(["--help"]).out + chatLog(["show", "--help"]).out;
     ["context", "sessions", "search", "show", "--json", "--max-chars", "終了コード", "context → search → show --around"].forEach((s) =>
       expect(help).toContain(s),
     );
@@ -345,7 +346,8 @@ describe("chat-log output corrections (docs/adr/0013)", () => {
   });
 
   test("the help explains --cwd ., --around and the continuation lines", () => {
-    const help = chatLog(["--help"]).out;
+    // docs/adr/0042: these are in the show and search help.
+    const help = chatLog(["show", "--help"]).out + chatLog(["search", "--help"]).out;
     ["--cwd .", "--limit 1", "（続き：#", "（前：#", "[thinking]", "⟪"].forEach((s) => expect(help).toContain(s));
   });
 });
@@ -395,7 +397,8 @@ describe("chat-log snippets, --until, --around and the help terms", () => {
   });
 
   test("the help defines 写し and the message number, and explains --until and the time formats", () => {
-    const help = chatLog(["--help"]).out;
+    // docs/adr/0042: the common options and the terms are in each subcommand's help.
+    const help = chatLog(["search", "--help"]).out;
     ["用語:", "写し:", "メッセージの番号:", "--until <時刻>", "UTC の 0 時", "手元の時刻帯"].forEach((s) => expect(help).toContain(s));
     expect(chatLog(["show", "--help"]).out).toContain("--around を付けて --limit が無いときは 10");
   });
@@ -538,7 +541,8 @@ describe("chat-log search --exclude", () => {
   });
 
   test("the help explains --exclude with an example", () => {
-    const help = chatLog(["--help"]).out;
+    // docs/adr/0042: the option is in the search help; the example stays in the overview.
+    const help = chatLog(["search", "--help"]).out + chatLog(["--help"]).out;
     ["--exclude <語>", "chat-log search 写し --exclude 写して --exclude 写す"].forEach((s) => expect(help).toContain(s));
   });
 });
@@ -565,7 +569,7 @@ describe("chat-log export", () => {
   });
 
   test("the help explains export", () => {
-    expect(chatLog(["--help"]).out).toContain("chat-log export <セッションID>");
+    expect(chatLog(["export", "--help"]).out).toContain("chat-log export <セッションID>"); // docs/adr/0042
     expect(chatLog(["export", "--help"]).code).toBe(0);
   });
 });
@@ -590,5 +594,61 @@ describe("chat-log with a closed output pipe", () => {
     ["search", "全文検索"],
   ])("%s ends with 0 and nothing on stderr", (...args) => {
     expect(throughHead(args)).toEqual({ code: 0, err: "" });
+  });
+});
+
+describe("chat-log help split by subcommand (docs/adr/0042)", () => {
+  const GUIDE = "各サブコマンドのオプション、出力の形、既定値は chat-log <サブコマンド> --help で出す。";
+  const loadHelp = async () => await import("../src/chat-log/help.ts") as unknown as { HELP: Record<string, string>; COMMON: string; TERMS: string };
+
+  test("ADR 0042 I1, I5: the overview is the same for no arguments, --help and -h, in the fixed order", () => {
+    const none = chatLog([]);
+    const long = chatLog(["--help"]);
+    const short = chatLog(["-h"]);
+    expect([none.code, long.code, short.code]).toEqual([0, 0, 0]);
+    expect(long.out).toBe(none.out);
+    expect(short.out).toBe(none.out);
+    const positions = ["利用者からIDを渡されたとき", "使う順序の勧め", "サブコマンド:", "用語:", "終了コード:", "注意:", "例:"].map((s) => none.out.indexOf(s));
+    positions.forEach((p) => expect(p).toBeGreaterThanOrEqual(0));
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+  });
+
+  test("ADR 0042 I2: the overview holds no subcommand section and no common options", async () => {
+    const { HELP, COMMON } = await loadHelp();
+    const help = chatLog(["--help"]).out;
+    [...Object.values(HELP), COMMON].forEach((section) => expect(help.includes(section)).toBe(false));
+  });
+
+  test("ADR 0042 I3: the subcommand list has exactly one line per subcommand", async () => {
+    const { HELP } = await loadHelp();
+    const rows = chatLog(["--help"]).out.split("\n");
+    const from = rows.indexOf("サブコマンド:");
+    const to = rows.indexOf(GUIDE);
+    expect(from).toBeGreaterThanOrEqual(0);
+    expect(to).toBeGreaterThan(from);
+    const list = rows.slice(from + 1, to);
+    expect(list).toHaveLength(Object.keys(HELP).length);
+    Object.keys(HELP).forEach((key) => expect(list.filter((l) => l.startsWith(`  ${key}  `))).toHaveLength(1));
+  });
+
+  test("ADR 0042 I4: a subcommand's help is its section, the common options and the terms", async () => {
+    const { HELP, COMMON, TERMS } = await loadHelp();
+    expect(TERMS.startsWith("用語:")).toBe(true);
+    Object.keys(HELP).forEach((key) => {
+      const r = chatLog([key, "--help"]);
+      expect(r.code).toBe(0);
+      expect(r.out).toBe(`${HELP[key]}\n\n${COMMON}\n\n${TERMS}\n`);
+    });
+  });
+
+  test.each([
+    [["show"], "chat-log show --help で使い方を出す。"],
+    [["show", "--bogus"], "chat-log show --help で使い方を出す。"],
+    [["nosuch"], "chat-log --help で使い方を出す。"],
+    [["--bogus"], "chat-log --help で使い方を出す。"],
+  ])("ADR 0042 I6: usage error %p points at the right help", (args, last) => {
+    const r = chatLog(args as string[]);
+    expect(r.code).toBe(2);
+    expect(r.err.trimEnd().split("\n").at(-1)).toBe(last as string);
   });
 });

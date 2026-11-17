@@ -190,7 +190,7 @@ describe("chat-log help for AI agents (docs/adr/0040)", () => {
     expect(help).toContain("利用者からIDを渡されたとき");
     expect(help).toContain("chat-log show --message <メッセージID>");
     expect(help).toContain("--session <セッションID>");
-    expect(help).toContain("--range <前>[:<後>]");
+    expect(chatLog(["show", "--help"]).out).toContain("--range <前>[:<後>]"); // docs/adr/0042
     expect(help).toContain("メッセージID:");
     expect(help.indexOf("利用者からIDを渡されたとき")).toBeLessThan(help.indexOf("使う順序の勧め"));
     const exportHelp = chatLog(["export", "--help"]).out;

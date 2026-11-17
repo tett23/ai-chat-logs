@@ -3,7 +3,7 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { contextText, flat, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
-import { HELP, MAIN_HELP } from "../chat-log/help.ts";
+import { HELP, MAIN_HELP, subcommandHelp } from "../chat-log/help.ts";
 import { messageSectionMarkdown, sessionMarkdown } from "../chat-log/markdown.ts";
 import { planSearch } from "../chat-log/search.ts";
 import {
@@ -26,9 +26,13 @@ import { MIN_PREFIX, parseTime } from "../chat-log/values.ts";
 import { loadEnvFile } from "../env.ts";
 import { defaultDatabasePath } from "../paths.ts";
 
+// docs/adr/0042: a usage error ends with the line naming the help to read; see helpHint.
 const usage = (message: string): never => {
-  throw exitError(2, `${message}\nchat-log --help で使い方を出す。`);
+  throw Object.assign(exitError(2, message), { usage: true });
 };
+const isUsage = (e: unknown): boolean => (e as { usage?: unknown } | null)?.usage === true;
+const helpHint = (argv: string[]): string =>
+  argv[0] !== undefined && Object.hasOwn(HELP, argv[0]) ? `chat-log ${argv[0]} --help で使い方を出す。` : "chat-log --help で使い方を出す。";
 
 const parse = (argv: string[]) => {
   try {
@@ -91,8 +95,8 @@ const main = (argv: string[]): string => {
   const { values: v, positionals } = parse(argv);
   const [command, ...rest] = positionals;
   if (command === undefined) return MAIN_HELP;
-  const help = HELP[command] ?? usage(`知らないサブコマンドです: ${command}`);
-  if (v.help) return `${help}\n`;
+  if (!Object.hasOwn(HELP, command)) usage(`知らないサブコマンドです: ${command}`);
+  if (v.help) return subcommandHelp(command);
 
   loadEnvFile();
   const time = (value: string | undefined): string | undefined => {
@@ -226,7 +230,7 @@ try {
 } catch (e) {
   if (isClosedPipe(e)) process.exit(0);
   if (isExitError(e)) {
-    console.error(e.message);
+    console.error(isUsage(e) ? `${e.message}\n${helpHint(process.argv.slice(2))}` : e.message);
     process.exit(e.exitCode);
   }
   throw e;
