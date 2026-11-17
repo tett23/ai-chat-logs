@@ -1,6 +1,6 @@
 # ADR 0026: セッションの全文の Markdown への書き出しと、GUI の会話の本文での検索語句の強調
 
-Status: accepted
+Status: superseded [{"part":"2. GUI の「書き出す」ボタン: 置き場所と名前","by":["docs/adr/0046-gui-header-pulldown-menus.md"]}]
 
 ## 文脈
 
