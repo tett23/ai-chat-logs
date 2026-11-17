@@ -117,6 +117,11 @@ export const runSync = () => invoke<RunResult>("run_sync");
 export const importClaudeAiExport = (zip: string) => invoke<RunResult>("import_claude_ai_export", { zip });
 // docs/adr/0026: output is the destination on success, the tail of stderr otherwise.
 export const exportSession = (provider: string, sessionId: string, path: string) => invoke<RunResult>("export_session", { provider, sessionId, path });
+// docs/adr/0040: the clipboard is written by the backend.
+export const copyText = (text: string) => invoke<null>("copy_text", { text });
+export const copySession = (provider: string, sessionId: string) => invoke<RunResult>("copy_session", { provider, sessionId });
+export const copyMessage = (provider: string, sessionId: string, messageId: string) =>
+  invoke<RunResult>("copy_message", { provider, sessionId, messageId });
 
 // docs/adr/0010
 export type { ScanResult } from "./scan.ts";

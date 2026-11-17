@@ -2,9 +2,9 @@
 // docs/adr/0011: a read-only CLI for AI agents to look up the chat logs.
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { contextText, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
+import { contextText, flat, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
 import { HELP, MAIN_HELP } from "../chat-log/help.ts";
-import { sessionMarkdown } from "../chat-log/markdown.ts";
+import { messageSectionMarkdown, sessionMarkdown } from "../chat-log/markdown.ts";
 import { planSearch } from "../chat-log/search.ts";
 import {
   exitError,
@@ -12,6 +12,9 @@ import {
   isExitError,
   listSessions,
   messageCount,
+  messageIds,
+  messageIndex,
+  type MessageKey,
   openReadOnly,
   search,
   sessionIds,
@@ -47,6 +50,9 @@ const parse = (argv: string[]) => {
         thinking: { type: "boolean", default: false },
         tools: { type: "boolean", default: false },
         messages: { type: "string" },
+        session: { type: "string" },
+        message: { type: "string" },
+        range: { type: "string" },
         help: { type: "boolean", short: "h", default: false },
       },
     });
@@ -62,6 +68,24 @@ const count = (value: string | undefined, name: string, fallback: number): numbe
 };
 
 const EXPORT_REJECTS = ["cwd", "since", "until", "limit", "offset", "max-chars", "json"] as const;
+// docs/adr/0040
+const EXPORT_MESSAGE_REJECTS = [...EXPORT_REJECTS, "range", "around", "thinking", "tools"] as const;
+const SHOW_MESSAGE_REJECTS = ["around", "limit", "offset", "since", "until", "cwd"] as const;
+const SEARCH_SESSION_REJECTS = ["cwd", "since", "until"] as const;
+
+type Values = ReturnType<typeof parse>["values"];
+const rejectWith = (v: Values, names: readonly (keyof Values)[], what: string): void => {
+  const rejected = names.filter((name) => v[name] !== undefined && v[name] !== false);
+  if (rejected.length > 0) usage(`${what} には ${rejected.map((n) => `--${String(n)}`).join("、")} を付けられない`);
+};
+
+// docs/adr/0040: --range <before>[:<after>].
+export const parseRange = (value: string | undefined): [number, number] => {
+  if (value === undefined) return [5, 5];
+  const m = /^(\d+)(?::(\d+))?$/.exec(value);
+  if (m === null) return usage(`--range には <前> か <前>:<後>（0以上の整数）を指定する: ${value}`);
+  return [Number(m[1]), Number(m[2] ?? m[1])];
+};
 
 const main = (argv: string[]): string => {
   const { values: v, positionals } = parse(argv);
@@ -93,6 +117,39 @@ const main = (argv: string[]): string => {
     if (matches.length > 1) throw exitError(2, `セッションIDが区別できません: ${prefix}\n候補:\n${matches.map((c) => `${c.provider}\t${c.session_id}`).join("\n")}\n--provider <提供元> で絞ってください。`);
     return matches[0] as SessionKey;
   };
+  // docs/adr/0040: a message ID or a unique prefix of it, within a session when one is given.
+  const messageOf = (prefix: string, session?: SessionKey): MessageKey & { index: number } => {
+    if (prefix.length < MIN_PREFIX) usage("メッセージIDは先頭8文字以上で指定する");
+    const candidates = messageIds(db, prefix, session?.provider ?? v.provider, session?.session_id);
+    const exact = candidates.filter((c) => c.uuid === prefix);
+    const matches = exact.length > 0 ? exact : candidates;
+    if (matches.length === 0) throw exitError(1, `メッセージが見つかりません: ${prefix}`);
+    if (matches.length > 1)
+      throw exitError(2, `メッセージIDが区別できません: ${prefix}\n候補:\n${matches.map((c) => `${c.provider}\t${c.session_id}\t${c.uuid}`).join("\n")}\nchat-log show <セッションID> --message <メッセージID> のようにセッションIDを添えてください。`);
+    const found = matches[0] as MessageKey;
+    const index = messageIndex(db, found.provider, found.session_id, found.uuid);
+    if (index === null) throw exitError(1, `メッセージが見つかりません: ${prefix}`);
+    return { ...found, index };
+  };
+
+  // docs/adr/0040: show --message <ID> [--range <before>[:<after>]]
+  const showMessage = (id: string, sessionArg: string | undefined): string => {
+    rejectWith(v, SHOW_MESSAGE_REJECTS, "--message");
+    const [before, after] = parseRange(v.range);
+    const m = messageOf(id, sessionArg === undefined ? undefined : sessionOf(sessionArg));
+    const total = messageCount(db, m.provider, m.session_id);
+    const from = Math.max(1, m.index - before);
+    const to = Math.min(total, m.index + after);
+    const messages = sessionMessages(db, m.provider, m.session_id, from, to);
+    const maxChars = count(v["max-chars"], "max-chars", 2000);
+    if (v.json) return jsonLines(messages.map((x) => ({ ...messageJson(x, maxChars), provider: m.provider, session_id: m.session_id })));
+    const title = sessionSummary(db, m.provider, m.session_id)?.title;
+    const head = `# ${m.provider} ${m.session_id} ${title ? flat(title) : ""}（メッセージ #${m.index}）`;
+    const body = messagesText(messages, { thinking: v.thinking, tools: v.tools, maxChars }, {
+      from, to, total, center: m.index, previous: true, command: `chat-log show ${m.session_id}${v.provider !== undefined ? ` --provider ${m.provider}` : ""}`,
+    });
+    return `${head}\n\n${body}`;
+  };
 
   switch (command) {
     case "sessions": {
@@ -101,10 +158,15 @@ const main = (argv: string[]): string => {
     }
     case "search": {
       if (rest.length === 0) usage("search には語を指定する");
-      const hits = search(db, planSearch(rest.join(" "), v.exclude ?? []), filter(v.cwd), count(v.limit, "limit", 20), offset, v.tools === true);
+      if (v.session !== undefined) rejectWith(v, SEARCH_SESSION_REJECTS, "--session");
+      const session = v.session !== undefined ? sessionOf(v.session) : undefined;
+      const f = session !== undefined ? { provider: session.provider, session: session.session_id } : filter(v.cwd);
+      const hits = search(db, planSearch(rest.join(" "), v.exclude ?? []), f, count(v.limit, "limit", 20), offset, v.tools === true);
       return v.json ? jsonLines(hits) : hits.map((h) => `${hitLines(h)}\n`).join("");
     }
     case "show": {
+      if (v.message === undefined && v.range !== undefined) usage("--range は --message と合わせて付ける");
+      if (v.message !== undefined) return showMessage(v.message, rest[0]);
       const id = sessionOf(rest[0] ?? usage("show にはセッションIDを指定する"));
       // docs/adr/0018: --around reads a few messages around a hit unless --limit says otherwise.
       const limit = count(v.limit, "limit", v.around !== undefined ? 10 : 50);
@@ -119,6 +181,13 @@ const main = (argv: string[]): string => {
     }
     // docs/adr/0026: the whole session as Markdown.
     case "export": {
+      if (v.message !== undefined) {
+        rejectWith(v, EXPORT_MESSAGE_REJECTS, "export --message");
+        const m = messageOf(v.message, rest[0] === undefined ? undefined : sessionOf(rest[0]));
+        const [message] = sessionMessages(db, m.provider, m.session_id, m.index, m.index);
+        if (message === undefined) throw exitError(1, `メッセージが見つかりません: ${v.message}`);
+        return messageSectionMarkdown(message);
+      }
       const id = sessionOf(rest[0] ?? usage("export にはセッションIDを指定する"));
       const rejected = EXPORT_REJECTS.filter((name) => v[name] !== undefined && v[name] !== false);
       if (rejected.length > 0) usage(`export には ${rejected.map((n) => `--${n}`).join("、")} を付けられない`);

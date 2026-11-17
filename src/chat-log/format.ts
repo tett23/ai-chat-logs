@@ -3,7 +3,7 @@ import { jsonBlock, type RenderOptions, renderBlock, truncate } from "./blocks.t
 import type { Hit, Message, Session } from "./store.ts";
 
 const short = (id: string | null): string => (id ?? "").slice(0, 8);
-const flat = (text: string): string => text.replace(/\s*\n\s*/g, " ");
+export const flat = (text: string): string => text.replace(/\s*\n\s*/g, " ");
 
 export const sessionLine = (s: Session): string =>
   [s.last_at ?? "", s.provider, short(s.session_id), String(s.message_count), s.title ? flat(s.title) : "", s.cwd ?? ""].join("\t");
@@ -23,7 +23,9 @@ export const messageText = (m: Message, o: RenderOptions): string | null => {
   return body.length === 0 ? null : [`## #${m.index} ${m.role ?? "?"} ${m.timestamp ?? ""}`, ...(origin ? [origin] : []), ...body].join("\n");
 };
 
-export type Page = { from: number; to: number; total: number; center: number | null; previous: boolean };
+// `command` is the show command that the navigation lines tell to run with --offset (docs/adr/0040:
+// show --message cannot take --offset); null to tell --offset alone.
+export type Page = { from: number; to: number; total: number; center: number | null; previous: boolean; command?: string | null };
 
 // docs/adr/0020: a run of messages with nothing shown becomes one item, saying whether --thinking
 // would show something.
@@ -57,8 +59,9 @@ export const messagesText = (messages: readonly Message[], o: RenderOptions, pag
   const size = page.to - page.from + 1;
   const single = page.center !== null && size === 1;
   const first = Math.max(1, page.from - size);
-  const before = page.previous && page.from > 1 && !single ? [`（前：#${first}〜#${page.from - 1} は --offset ${first - 1} で出す）`] : [];
-  const after = page.to < page.total && !single ? [`（続き：#${page.to + 1} から。--offset ${page.to} で出す）`] : [];
+  const offset = (n: number): string => (page.command ? `${page.command} --offset ${n}` : `--offset ${n}`);
+  const before = page.previous && page.from > 1 && !single ? [`（前：#${first}〜#${page.from - 1} は ${offset(first - 1)} で出す）`] : [];
+  const after = page.to < page.total && !single ? [`（続き：#${page.to + 1} から。${offset(page.to)} で出す）`] : [];
   const parts = [...before, ...shown, ...after];
   return parts.length === 0 ? "" : `${parts.join("\n\n")}\n`;
 };

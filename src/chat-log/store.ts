@@ -25,7 +25,8 @@ export const openReadOnly = (path: string): Database => {
   return db;
 };
 
-export type Filter = { provider?: string; cwd?: string; since?: string; until?: string };
+// docs/adr/0040: `session` narrows search to one session.
+export type Filter = { provider?: string; cwd?: string; since?: string; until?: string; session?: string };
 
 const escapeLike = (s: string): string => s.replace(/[%_\\]/g, (c) => `\\${c}`);
 
@@ -196,7 +197,9 @@ const indexesOf = (db: Database, rows: readonly { provider: string; session_id: 
 // a record matching in both counts as a match in its text.
 export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number, offset: number, tools = false): Hit[] => {
   if (plan.terms.length === 0) return [];
-  const [filterClauses, filterParams] = conditions(f, "s.provider", "ss.cwd", "r.timestamp");
+  const [baseClauses, baseParams] = conditions(f, "s.provider", "ss.cwd", "r.timestamp");
+  const filterClauses = [...baseClauses, ...(f.session !== undefined ? ["r.session_id = ?"] : [])];
+  const filterParams = [...baseParams, ...(f.session !== undefined ? [f.session] : [])];
   const branch = (table: string, tool: number): [string, SQLQueryBindings[]] => [
     `SELECT rowid AS rid, text, ${tool} AS tool FROM ${table} WHERE ${[
       ...(plan.fts !== null ? [`${table} MATCH ?`] : []),
@@ -237,3 +240,31 @@ export const search = (db: Database, plan: SearchPlan, f: Filter, limit: number,
     matched_in: row.tool === 1 ? ["tool"] : matchedIn(row.raw, plan.terms),
   }));
 };
+
+// docs/adr/0040: messages are pointed at by their IDs (records.uuid). The candidates are the
+// (provider, session, ID) of messages: user and assistant records of the conversation kinds; copies
+// share the ID of their original, so DISTINCT folds them.
+export type MessageKey = SessionKey & { uuid: string };
+export const messageIds = (db: Database, prefix: string, provider?: string, sessionId?: string): MessageKey[] =>
+  db
+    .query<MessageKey, [string, string, number, string, string | null, string | null, string | null, string | null]>(
+      `SELECT DISTINCT s.provider, r.session_id, r.uuid
+       FROM records r JOIN sources s ON s.id = r.source_id
+       WHERE r.uuid >= ? AND r.uuid < ? AND substr(r.uuid, 1, ?) = ?
+         AND r.type IN ('user', 'assistant') AND r.session_id IS NOT NULL
+         AND s.kind IN ('claude-code/transcript', 'claude-cowork/transcript', 'claude-ai/conversation', 'codex/conversation')
+         AND (? IS NULL OR s.provider = ?) AND (? IS NULL OR r.session_id = ?)
+       ORDER BY s.provider, r.session_id, r.uuid`,
+    )
+    .all(prefix, `${prefix}\u{10FFFF}`, prefix.length, prefix, provider ?? null, provider ?? null, sessionId ?? null, sessionId ?? null);
+
+// The number `show` gives to the message of a session with the ID, or null.
+export const messageIndex = (db: Database, provider: string, sessionId: string, uuid: string): number | null =>
+  db
+    .query<{ n: number }, [string, string, string]>(
+      `SELECT x.n FROM (
+         SELECT record_rowid, row_number() OVER (ORDER BY ${messageOrder}) n
+         FROM session_messages WHERE provider = ? AND session_id = ?) x
+       JOIN records r ON r.rowid = x.record_rowid WHERE r.uuid = ?`,
+    )
+    .get(provider, sessionId, uuid)?.n ?? null;

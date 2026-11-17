@@ -10,6 +10,7 @@ import { importGate } from "./import-gate.ts";
 import { initialRange, newerRange, newestFirst, olderRange, type Range } from "./pages.ts";
 import { type Filter, projectOptions, providerLabel } from "./projects.ts";
 import { scanMessage } from "./scan.ts";
+import { sessionTooltip, sidebarMeta } from "./session-meta.ts";
 import { formatSize } from "./size.ts";
 import { splitSnippet } from "./snippet.ts";
 import { ALL_SHOWN, HIDEABLE, messageShown, parseShown, type Shown, serializeShown } from "./visibility.ts";
@@ -213,6 +214,8 @@ const messageNode = (message: api.Message): HTMLElement => {
     h("span", {}, [formatTime(message.timestamp)]),
     message.original_id ? h("span", { class: "break-all" }, [`元ID: ${message.original_id}`]) : null,
     message.version ? h("span", {}, [`版: ${message.version}`]) : null,
+    // docs/adr/0040
+    message.uuid ? h("span", { class: "ml-auto flex gap-1" }, messageCopyButtons(message.uuid)) : null,
   ]);
   const body = () => message.blocks.map((block, i) => blockNode(block, message.rowid, i, message.encrypted_block_indexes.includes(i)));
   const content = message.is_sidechain ? [folded("サブエージェント", () => [header, ...body()])] : [header, ...body()];
@@ -338,11 +341,49 @@ exportButton.addEventListener("click", () => {
     }
   })();
 });
+// docs/adr/0040: copy buttons. A button says so for 2 seconds after copying; a failure shows in exportStatus.
+const COPY_BUTTON = "rounded border border-gray-300 px-1 text-xs hover:bg-gray-50 disabled:opacity-50";
+const failureText = (e: unknown): string =>
+  String(typeof e === "object" && e !== null && "kind" in e ? errorText(e as api.StoreError) : e);
+const copyButton = (label: string, copy: () => Promise<api.RunResult | null>, extraClass = ""): HTMLButtonElement => {
+  const button = h("button", { class: `${COPY_BUTTON} ${extraClass}`, attrs: { type: "button" } }, [label]);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    button.disabled = true;
+    void copy()
+      .then((result) => {
+        if (result !== null && result.exit_code !== 0) {
+          exportStatus.textContent = `コピーに失敗しました（終了コード ${result.exit_code ?? "なし"}）\n${result.output}`;
+          return;
+        }
+        button.textContent = "コピーしました";
+        setTimeout(() => { button.textContent = label; }, 2000);
+      })
+      .catch((e) => { exportStatus.textContent = `コピーに失敗しました: ${failureText(e)}`; })
+      .finally(() => { button.disabled = false; });
+  });
+  return button;
+};
+const messageCopyButtons = (uuid: string): HTMLElement[] => {
+  const provider = conversation.provider as string;
+  const sessionId = conversation.sessionId as string;
+  return [
+    copyButton("IDをコピー", () => api.copyText(uuid)),
+    copyButton("コピー", () => api.copyMessage(provider, sessionId, uuid)),
+  ];
+};
+const copySessionIdButton = copyButton("セッションIDをコピー", async () =>
+  conversation.sessionId ? api.copyText(conversation.sessionId) : null, "px-2 py-0.5");
+copySessionIdButton.disabled = true;
+const copySessionButton = copyButton("セッションをコピー", async () =>
+  conversation.sessionId ? api.copySession(conversation.provider as string, conversation.sessionId) : null, "px-2 py-0.5");
+copySessionButton.disabled = true;
+
 const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90 py-1" }, [
   h("div", { class: "flex items-center justify-between gap-4 whitespace-nowrap" }, [
     h("span", { class: "text-xs font-medium text-gray-600", attrs: { id: "conversation-provider" } }),
     statusText,
-    h("div", { class: "flex items-center gap-3" }, [exportButton, shownMenu]),
+    h("div", { class: "flex items-center gap-3" }, [copySessionIdButton, copySessionButton, exportButton, shownMenu]),
   ]),
   contextBar,
   exportStatus,
@@ -353,8 +394,14 @@ applyShownToView();
 const renderContext = (meta: api.SessionSummary | null, generation: number): void => {
   const category = meta?.category;
   const labels: Record<string, string> = { subagent: "サブエージェント", internal: "内部処理" };
-  clear(contextBar, ...[
-    meta?.title ? h("span", { class: "font-medium text-gray-700" }, [meta.title]) : null,
+  // docs/adr/0040: the metadata of the session, in two rows above the conversation.
+  const titleRow = h("div", { class: "w-full truncate font-medium text-gray-700" }, [meta?.title ?? conversation.title ?? conversation.sessionId ?? ""]);
+  clear(contextBar, titleRow, ...[
+    meta ? h("span", {}, [providerLabel(meta.provider)]) : null,
+    meta ? h("span", { class: "select-text break-all font-mono" }, [meta.session_id]) : null,
+    meta?.cwd ? h("span", { class: "select-text break-all" }, [meta.cwd]) : null,
+    meta ? h("span", {}, [`${formatTime(meta.first_at)} 〜 ${formatTime(meta.last_at)}`]) : null,
+    meta ? h("span", {}, [`${meta.message_count} 件`]) : null,
     category && labels[category] ? h("span", {}, [labels[category]]) : null,
     meta?.agent_nickname ? h("span", {}, [`名前: ${meta.agent_nickname}`]) : null,
     meta?.agent_role ? h("span", {}, [`役割: ${meta.agent_role}`]) : null,
@@ -455,6 +502,8 @@ const openSession = async (
   conversation.title = title;
   highlightTerms = terms;
   exportButton.disabled = false;
+  copySessionIdButton.disabled = false;
+  copySessionButton.disabled = false;
   exportStatus.textContent = "";
   conversation.range = null;
   conversation.total = 0;
@@ -511,12 +560,10 @@ const providerBadge = (provider: string): Node =>
   h("span", { class: "mr-1 rounded bg-gray-100 px-1 text-xs text-gray-600" }, [providerLabel(provider)]);
 
 const sessionItem = (s: api.SessionSummary): Node =>
-  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", on: { click: () => openSession(s.provider, s.session_id, s.title, null, null, s.message_count, []) } }, [
+  h("li", { class: "cursor-pointer p-2 hover:bg-gray-50", attrs: { title: sessionTooltip(s, formatTime) }, on: { click: () => openSession(s.provider, s.session_id, s.title, null, null, s.message_count, []) } }, [
     h("div", { class: "truncate font-medium" }, [providerBadge(s.provider), s.title ?? s.session_id]),
-    h("div", { class: "flex justify-between text-xs text-gray-500" }, [
-      h("span", {}, [formatTime(s.last_at)]),
-      h("span", {}, [`${s.message_count} 件`]),
-    ]),
+    // docs/adr/0040: the second and last line; the whole is in the tooltip.
+    h("div", { class: "truncate text-xs text-gray-500" }, [sidebarMeta(s, formatTime)]),
   ]);
 
 const snippetNode = (snippet: string): Node =>

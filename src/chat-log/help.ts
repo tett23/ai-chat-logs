@@ -44,6 +44,9 @@ const SEARCH = `chat-log search <語...> [オプション]
   --tools               ツールのテキスト（ツールの名前と入力の JSON、文字列の結果、配列の結果の中のテキスト）も探す。
                         本文とツールのテキストのどちらかが、すべての語を含めば出る（両方にまたがる AND にはしない）。
                         ファイルの編集やコマンドの中身など、本文に無い内容を探すときに使う
+  --session <セッションID>  そのセッションのメッセージだけを探す。セッションIDは show と同じく先頭8文字以上でよい
+                        （区別できなければ終了コード2で候補を標準エラー出力に、無ければ終了コード1）。
+                        --cwd、--since、--until とは併用できない（終了コード2）。--provider で候補を絞れる
   既定ではプロジェクトに絞らない。いまのプロジェクトだけを探すには --cwd . を付ける。
   出力（1件2行。一致した部分は ⟪ ⟫ で囲む。本文の ** は Markdown の太字で、強調ではない）:
   抜粋は、語ごとに最初に一致した位置の前後32文字。離れた範囲のあいだと、本文を切ったところに … を置く。
@@ -80,16 +83,36 @@ const SHOW = `chat-log show <セッションID> [オプション]
   続きがあるときは最後に「（続き：#<次の番号> から。--offset <数> で出す）」の行。--around のときも、その --offset で続きを出せる。
   --around で1件目より後から始まったときは、先頭に「（前：#<最初>〜#<数> は --offset <数> で出す）」の行。
   前の行は、範囲の直前の同じ件数の範囲を指す。--around で --limit 1 のときは、前と続きの行を出さない。
-  --json: index、uuid、timestamp、role、model、is_sidechain、original_id、version、blocks（kind と text、name、input、type、truncated_from）`;
+  --json: index、uuid、timestamp、role、model、is_sidechain、original_id、version、blocks（kind と text、name、input、type、truncated_from）
+
+chat-log show [<セッションID>] --message <メッセージID> [--range <前>[:<後>]]
+  メッセージIDで指したメッセージと、その前後を出す。メッセージIDは先頭8文字以上（短いと終了コード2）。
+  セッションIDは省ける。添えると、そのセッションの中だけを探す。
+  メッセージIDが2つ以上のセッションにある（fork などで実際にある）ときは、終了コード2で候補
+  （<提供元>	<セッションID>	<メッセージID>）を標準エラー出力に書く。候補のセッションIDを添えて実行しなおす。
+  無いとき（メッセージでない行の ID を含む）は終了コード1。写しの ID は元のメッセージを指す。
+  --range <前>[:<後>]   前に <前> 件、後に <後> 件を足す。--range <数> は <数>:<数>。既定 5（前後5件、計11件）。
+                        --range 0 はそのメッセージだけ。範囲はセッションの最初と最後で切る（ずらさない）。
+                        件数は番号で数える（省いたメッセージも数える）。--message が無いと付けられない
+  範囲の思考は --thinking が無くても出す。--tools、--max-chars、--json、--provider は show と同じ。
+  --around、--limit、--offset、--since、--until、--cwd とは併用できない（終了コード2）。
+  出力: 先頭に「# <提供元> <セッションID（全体）> <タイトル>（メッセージ #<番号>）」の行、続けて show と同じ形。
+  前と続きの行は「chat-log show <セッションID> --offset <数>」の形で、そのまま実行できる。--range 0 では出さない。
+  --json: show --json の形に provider と session_id を足したもの。uuid がメッセージID`;
 
 // docs/adr/0026
 const EXPORT = `chat-log export <セッションID> [--provider <名前>]
-  1つのセッションの全文を Markdown で標準出力に書く（ファイルに残すときは > <ファイル> で受ける）。
+  1つのセッションの全文を Markdown で標準出力に書く。会話を読むには show を使う（export は切らないので長い）。
   写しを除いたすべてのメッセージを番号の順に書く。本文、思考、ツールの入出力を切らずに書く
   （200文字以上の base64 だけは [base64 <文字数> 文字] にする）。本文が空の思考と、書くものが無いメッセージは書かない。
-  思考とツールは <details> で折りたたむ。人が読むためのもので、AI が読むには show を使う。
+  思考とツールは <details> で折りたたむ。
   同じ ID が複数提供元にある場合は --provider <名前> で1つに絞る。
-  --cwd、--since、--until、--limit、--offset、--max-chars、--json は付けられない。
+  --cwd、--since、--until、--limit、--offset、--max-chars、--json は付けられない（終了コード2）。
+chat-log export [<セッションID>] --message <メッセージID>
+  そのメッセージ1つの節（## #<番号> … から）だけを書く。セッションの見出しは書かない。
+  書く本文が無いメッセージは、見出しの行と「（書く本文が無い）」を書く。
+  メッセージIDの決め方と終了コードは show --message と同じ。付けられるのは --provider だけ
+  （--range、--around、--thinking、--tools と上の付けられないものは終了コード2）。
   出力:
     # <タイトル>
     - セッション、提供元、cwd、期間、メッセージの件数
@@ -100,6 +123,12 @@ export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIO
 
 export const MAIN_HELP = `chat-log: Claude と Codex の会話の履歴を引く、読み取り専用の CLI。
 AI のエージェントが、過去の経緯や決定を思い出して文脈を戻すために使う。
+
+利用者からIDを渡されたとき（利用者が GUI でコピーしたもの）:
+  セッションID   chat-log show <セッションID>                    最初から読む
+                 chat-log search <語> --session <セッションID>   そのセッションの中を探す
+  メッセージID   chat-log show --message <メッセージID>          その前後を読む（--range で広げる）
+  どちらの ID かわからないときは、まず show --message で試し、終了コード1ならセッションIDとして show に渡す。
 
 使う順序の勧め: context → search → show --around
   1. chat-log context                     いまのプロジェクトの最近のセッションを知る
@@ -126,6 +155,9 @@ ${COMMON}
         パス、generation、行番号の順で最初の1つだけを使い、ほかは会話・検索・件数から除く。
         動詞の「写す」と同じ形なので、検索ではほかの語を足すか --exclude 写して などで絞るとよい。
   メッセージの番号: セッションの中の通し番号（1始まり、時刻の順。写しは数えない）。
+  セッションID: セッションの ID（Claude は UUID、Codex はスレッドの ID）。sessions --json などの session_id。
+  メッセージID: メッセージの ID（Claude は UUID、Codex は64文字の16進）。search --json と show --json の uuid。
+                Codex の「元ID」（original_id）とは別の値。
 
 終了コード:
   0  成功（結果が0件のときも含む）
@@ -141,6 +173,8 @@ ${COMMON}
   chat-log context
   chat-log search ADR 写し --cwd .
   chat-log show 5a1e0a3b --around 120
+  chat-log show --message 98d7f31b --range 3:10
+  chat-log search pm2 --session 5a1e0a3b
   chat-log search pm2 --since 2026-10-01 --until 2026-10-08
   chat-log search 写し --exclude 写して --exclude 写す
   chat-log sessions --provider claude-ai --since 30d --json

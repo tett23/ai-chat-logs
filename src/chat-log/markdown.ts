@@ -43,13 +43,19 @@ const blockMarkdown = (b: Block): string | null => {
   }
 };
 
+const messageHead = (m: Message): string =>
+  [`## #${m.index}`, m.role ?? "?", m.timestamp ?? "", ...(m.model ? [m.model] : []), ...(m.is_sidechain ? ["(サブエージェント)"] : [])].join(" ");
+
 const messageMarkdown = (m: Message): string | null => {
   const body = m.blocks.map(blockMarkdown).filter((t): t is string => t !== null);
   if (body.length === 0) return null;
-  const head = [`## #${m.index}`, m.role ?? "?", m.timestamp ?? "", ...(m.model ? [m.model] : []), ...(m.is_sidechain ? ["(サブエージェント)"] : [])].join(" ");
+  const head = messageHead(m);
   const origin = [m.original_id ? `- 元ID: ${m.original_id}` : null, m.version ? `- 版: ${m.version}` : null].filter((v): v is string => v !== null);
   return [head, ...origin, ...body].join("\n\n");
 };
+
+// docs/adr/0040: one message for export --message; a message with nothing to write keeps its head.
+export const messageSectionMarkdown = (m: Message): string => `${messageMarkdown(m) ?? `${messageHead(m)}\n\n（書く本文が無い）`}\n`;
 
 export const sessionMarkdown = (s: Session, messages: readonly Message[]): string => {
   const header = [
