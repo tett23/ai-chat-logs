@@ -1,6 +1,6 @@
 # ADR 0040: chat-log と GUI でのセッションIDとメッセージIDの扱い
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
