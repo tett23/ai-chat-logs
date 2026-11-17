@@ -1,6 +1,6 @@
 # ADR 0046: GUI の会話の欄の見出しのボタンをプルダウンにまとめる
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 

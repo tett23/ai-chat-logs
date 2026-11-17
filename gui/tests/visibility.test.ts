@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ALL_SHOWN, blockShown, messageShown, parseShown, serializeShown } from "../src/visibility.ts";
+import { ALL_SHOWN, blockShown, messageShown, parseShown, serializeShown, type Shown, shownMenuLabel } from "../src/visibility.ts";
 
 // docs/adr/0024
 describe("blockShown", () => {
@@ -63,5 +63,28 @@ describe("ADR 0037 V4 encrypted placeholder visibility", () => {
   test("toggle survives serialization and restores default on old settings", () => {
     expect(parseShown(serializeShown({ ...ALL_SHOWN, unavailable: true })).unavailable).toBe(true);
     expect(parseShown('{"thinking":false}').unavailable).toBe(false);
+  });
+});
+
+describe("the 表示 pulldown label (docs/adr/0046)", () => {
+  test.each([
+    [ALL_SHOWN, "表示"],
+    [{ thinking: true, tool_use: true, tool_result: true }, "表示"],
+    [{ ...ALL_SHOWN, tool_use: false }, "表示（1 個を変更）"],
+    [{ ...ALL_SHOWN, unavailable: true }, "表示（1 個を変更）"],
+    [{ thinking: false, tool_use: false, tool_result: false, unavailable: true }, "表示（4 個を変更）"],
+    [parseShown(null), "表示"],
+    [parseShown("{"), "表示"],
+    [parseShown('{"tool_use":false}'), "表示（1 個を変更）"],
+  ] as [Shown, string][])("ADR 0046 I1: %p is labelled %s", (shown, label) => {
+    expect(shownMenuLabel(shown)).toBe(label);
+  });
+
+  test.each([
+    { ...ALL_SHOWN, tool_use: false },
+    { ...ALL_SHOWN, unavailable: true },
+    { thinking: false, tool_use: false, tool_result: false, unavailable: true },
+  ] as Shown[])("ADR 0046 I2: the label of %p survives saving and loading", (shown) => {
+    expect(shownMenuLabel(parseShown(serializeShown(shown)))).toBe(shownMenuLabel(shown));
   });
 });
