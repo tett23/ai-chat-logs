@@ -29,9 +29,25 @@ const entries = (t: Turn): { message: Message; indent: string }[] => [
 
 export type OutlinePage = { offset: number; limit: number; maxChars: number };
 
-export const outlineLines = (all: Turn[], p: OutlinePage): string[] =>
-  all.slice(p.offset, p.offset + p.limit).flatMap(entries).map(({ message: m, indent }) =>
-    `${indent}#${m.index} ${m.role} ${m.timestamp ?? ""} ${truncate(outlineText(m), p.maxChars)}`);
+const turnLines = (t: Turn, maxChars: number): string[] =>
+  entries(t).map(({ message: m, indent }) => `${indent}#${m.index} ${m.role} ${m.timestamp ?? ""} ${truncate(outlineText(m), maxChars)}`);
+
+// docs/adr/0044: the text outline. It takes the most turns from the offset, up to the limit, whose output
+// (heading, turn lines, and the continuation line when turns remain) fits in maxBytes; it always takes the
+// turn at the offset. maxBytes 0 means no byte limit.
+export const outlineTextPage = (all: Turn[], p: OutlinePage & { maxBytes: number }, head: string, more: (next: number) => string): string => {
+  const render = (k: number): string => {
+    const next = p.offset + k;
+    const body = all.slice(p.offset, next).flatMap((t) => turnLines(t, p.maxChars));
+    return `${[head, ...body, ...(next < all.length ? [more(next)] : [])].join("\n")}\n`;
+  };
+  if (p.offset >= all.length) return render(0);
+  const most = Math.min(p.limit, all.length - p.offset);
+  if (p.maxBytes === 0) return render(most);
+  const fits = (k: number) => Buffer.byteLength(render(k), "utf8") <= p.maxBytes;
+  const k = Array.from({ length: most }, (_, i) => most - i).find(fits) ?? 1;
+  return render(k);
+};
 
 export const outlineJson = (all: Turn[], p: OutlinePage): Record<string, unknown>[] =>
   all.slice(p.offset, p.offset + p.limit).flatMap(entries).map(({ message: m }) => {

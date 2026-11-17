@@ -120,7 +120,7 @@ chat-log export [<セッションID>] --message <メッセージID>
     <本文>`;
 
 // docs/adr/0043
-const OUTLINE = `chat-log outline <セッションID> [--provider <名前>] [--limit <数>] [--offset <数>] [--max-chars <数>] [--json]
+const OUTLINE = `chat-log outline <セッションID> [--provider <名前>] [--limit <数>] [--offset <数>] [--max-chars <数>] [--max-bytes <数>] [--json]
   長いセッションの流れを短く見る。セッションの発言と、それぞれへの最後の応答だけを1行ずつ出す。
   発言: 役割が user で、サブエージェントのものでなく、テキストを持つメッセージ（利用者が打ったものかは問わない。
         <task-notification> などで始まるものも出る）。
@@ -128,17 +128,19 @@ const OUTLINE = `chat-log outline <セッションID> [--provider <名前>] [--l
   応答: 区切りの中で、役割が assistant で、サブエージェントのものでなく、テキストを持つ最後のメッセージ。
   本文はテキストを1行にしたもの。思考、ツールの入出力、サブエージェントのメッセージは出さない。
   --limit と --offset は区切りを数える（何も出さない区切りも数える）。
-  既定: --limit 100、--max-chars 200
+  --max-bytes <数>      テキストの出力の UTF-8 のバイト数の上限（0 で上限なし）。区切りの単位で、上限に収まるところで止める。
+                        --offset の位置の区切りは、上限を超えても出す。--json には効かず、一緒に付けると終了コード2
+  既定: --limit 100、--max-chars 80、--max-bytes 8000
   出力:
     # <提供元> <セッションID（全体）> <タイトル>（<メッセージの数> 件、発言 <発言の数> 件）
     #<番号> user <時刻> <本文>
       #<番号> assistant <時刻> <本文>
-    （続き：chat-log outline <セッションID> --offset <数>）  ← 区切りが残るときだけ。そのまま実行できる
+    （続き：chat-log outline <セッションID> --offset <数>）  ← --limit か --max-bytes で止めて区切りが残るときだけ。そのまま実行できる
   番号は show と同じ。要るところは chat-log show <セッションID> --around <番号> で読む。
   --json: 発言と応答を1行ずつ。index、uuid、timestamp、role、text、truncated_from（切ったときの元の文字数、切らなければ null）。
           text には「…（N 文字のうち M 文字）」を付けない。見出しと続きの行は出さない。
   --around、--message、--range、--thinking、--tools、--cwd、--since、--until、--all、--messages、--session、--exclude とは
-  併用できない（終了コード2）。`;
+  併用できない（終了コード2）。--json と --max-bytes も併用できない。--limit、--max-chars、--max-bytes は続きの行に引き継がない。`;
 
 export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, outline: OUTLINE, export: EXPORT };
 

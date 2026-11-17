@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 import { contextText, flat, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
 import { HELP, MAIN_HELP, subcommandHelp } from "../chat-log/help.ts";
 import { messageSectionMarkdown, sessionMarkdown } from "../chat-log/markdown.ts";
-import { outlineJson, outlineLines, promptCount, turns } from "../chat-log/outline.ts";
+import { outlineJson, outlineTextPage, promptCount, turns } from "../chat-log/outline.ts";
 import { planSearch } from "../chat-log/search.ts";
 import {
   exitError,
@@ -50,6 +50,7 @@ const parse = (argv: string[]) => {
         limit: { type: "string" },
         offset: { type: "string" },
         "max-chars": { type: "string" },
+        "max-bytes": { type: "string" },
         json: { type: "boolean", default: false },
         around: { type: "string" },
         thinking: { type: "boolean", default: false },
@@ -99,6 +100,8 @@ const main = (argv: string[]): string => {
   const [command, ...rest] = positionals;
   if (command === undefined) return MAIN_HELP;
   if (!Object.hasOwn(HELP, command)) usage(`知らないサブコマンドです: ${command}`);
+  // docs/adr/0044: only the text outline takes a byte limit.
+  if (v["max-bytes"] !== undefined && command !== "outline") usage(`${command} には --max-bytes を付けられない`);
   if (v.help) return subcommandHelp(command);
 
   loadEnvFile();
@@ -190,15 +193,15 @@ const main = (argv: string[]): string => {
     case "outline": {
       rejectWith(v, OUTLINE_REJECTS, "outline");
       const id = sessionOf(rest[0] ?? usage("outline にはセッションIDを指定する"));
-      const page = { offset, limit: count(v.limit, "limit", 100), maxChars: count(v["max-chars"], "max-chars", 200) };
+      if (v.json && v["max-bytes"] !== undefined) usage("outline --json には --max-bytes を付けられない");
+      const page = { offset, limit: count(v.limit, "limit", 100), maxChars: count(v["max-chars"], "max-chars", 80), maxBytes: count(v["max-bytes"], "max-bytes", 8000) };
       const total = messageCount(db, id.provider, id.session_id);
       const all = turns(sessionMessages(db, id.provider, id.session_id, 1, total));
       if (v.json) return jsonLines(outlineJson(all, page));
       const title = sessionSummary(db, id.provider, id.session_id)?.title;
       const head = `# ${id.provider} ${id.session_id} ${title ? flat(title) : ""}（${total} 件、発言 ${promptCount(all)} 件）`;
-      const next = page.offset + page.limit;
-      const more = next < all.length ? [`（続き：chat-log outline ${id.session_id} --offset ${next}${v.provider !== undefined ? ` --provider ${id.provider}` : ""}）`] : [];
-      return `${[head, ...outlineLines(all, page), ...more].join("\n")}\n`;
+      const more = (next: number) => `（続き：chat-log outline ${id.session_id} --offset ${next}${v.provider !== undefined ? ` --provider ${id.provider}` : ""}）`;
+      return outlineTextPage(all, page, head, more);
     }
     // docs/adr/0026: the whole session as Markdown.
     case "export": {
