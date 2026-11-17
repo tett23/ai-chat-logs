@@ -1,6 +1,6 @@
 # ADR 0040: chat-log と GUI でのセッションIDとメッセージIDの扱い
 
-Status: accepted
+Status: superseded [{"part":"テスト設計 10","by":["docs/adr/0042-split-chat-log-help-by-subcommand.md"]}]
 
 ## 文脈
 

@@ -1,6 +1,6 @@
 # ADR 0011: AI のエージェントが履歴を引くための CLI
 
-Status: accepted
+Status: superseded [{"part":"テスト設計 12","by":["docs/adr/0042-split-chat-log-help-by-subcommand.md"]},{"part":"トレードオフ","by":["docs/adr/0042-split-chat-log-help-by-subcommand.md"],"kind":"supplement"}]
 
 ## 文脈
 
