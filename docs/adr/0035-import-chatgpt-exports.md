@@ -1,6 +1,6 @@
 # ADR 0035: ChatGPT のエクスポートを取り込む
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 

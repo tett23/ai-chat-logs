@@ -1,6 +1,6 @@
 # ADR 0041: Codex のログを写しの作りなおしでなく追記で保存し、重複を除く
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
