@@ -114,7 +114,7 @@ pm2 や `bun` の場所が変わると、launchd に書き込まれた PATH と�
 ## Codex のログを保存する
 
 Codex の `~/.codex/sessions` と `~/.codex/archived_sessions` 以下の JSONL を、既存の `bin/sync` と定期取り込みで保存する（[ADR 0034](docs/adr/0034-import-codex-rollouts.md)）。
-読み込み元は `AI_CHAT_LOGS_CODEX_DIR`、保存先は `AI_CHAT_LOGS_CODEX_STORE` で変えられる。
+読み込み元は `AI_CHAT_LOGS_CODEX_DIR`、保存用ディレクトリは `AI_CHAT_LOGS_CODEX_STORE` で変えられる。
 
 元ログの完成した行までを、最初に保存したときの内容の SHA-256 を名前にしたディレクトリへコピーする。
 同じディレクトリに、閲覧用の `messages-v1.jsonl` と処理結果の `manifest-v2.json` を置く。
@@ -122,7 +122,7 @@ Codex の `~/.codex/sessions` と `~/.codex/archived_sessions` 以下の JSONL �
 同じ入力を再取り込みしても、会話の写しは増えない。
 ログが伸びた場合は、伸びた行だけを同じディレクトリに追記する（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 元ログが書きかえられた（先頭が変わった）場合だけ、新しいディレクトリに全体をコピーする。
-保存と追記は、保存先の `.lock.sqlite` のロックを取って1つずつ行う。
+保存と追記は、保存用ディレクトリ（`AI_CHAT_LOGS_CODEX_STORE`）の `.lock.sqlite` のロックを取って1つずつ行う。
 
 [ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版は、ログが伸びるたびに全体の新しいコピーを残していた。
 そのコピーと、そこから取り込んだ行を除くには、下の「Codex の古いコピーを除く」の手順で `codex-store-dedupe` を一度だけ実行する。
@@ -148,10 +148,11 @@ codex-log-sources | chat-log-import
 
 ### Codex の古いコピーを除く
 
-[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残した、同じ元ログの古いコピーを除く（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残した、同じ元ログの古いコピーを除く。
 元ログごとに最も大きいコピーを残し、ほかのコピーは、その中身と取り込んだ行が残すコピーにあると確かめたものだけを消す。
 消さないコピーは、理由を出す。
-一度だけ、次の順に実行する。インストールしていなければ、`codex-store-dedupe` の代わりに `bun src/cli/codex-store-dedupe.ts` を使う。
+一度だけ、次の順に実行する。
+インストールしていなければ、`codex-store-dedupe` の代わりに `bun src/cli/codex-store-dedupe.ts` を使う。
 
 ```sh
 # 1. 取り込みを止める
@@ -167,7 +168,7 @@ pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
 ```
 
 - 途中で止まっても、もう一度実行すれば続きから終わる。
-- 圧縮の直前の取り込みは止められないが、保存先のロックで重ならない。
+- 圧縮の直前の取り込みは止められないが、保存用ディレクトリのロックで重ならない。
 - 実行の前に、データベースと保存用ディレクトリのバックアップを取っておくとよい。
 
 ## コンテキスト圧縮の直前に取り込む
@@ -253,7 +254,7 @@ pm2 のデーモンは、再起動やログアウトで止まる。
 | `AI_CHAT_LOGS_ENV_FILE` | 読む `.env` のパス | リポジトリのルートの `.env` |
 | `AI_CHAT_LOGS_CODEX_CRON` | Codex 専用の収集時刻 | `30 * * * *` |
 | `AI_CHAT_LOGS_CODEX_DIR` | Codex のローカルログを読むディレクトリ | `~/.codex` |
-| `AI_CHAT_LOGS_CODEX_STORE` | Codex の原本と変換結果の保存先 | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/codex` |
+| `AI_CHAT_LOGS_CODEX_STORE` | Codex の原本と変換結果の保存用ディレクトリ | `${XDG_DATA_HOME:-~/.local/share}/ai-chat-logs/codex` |
 | `AI_CHAT_LOGS_CONFIG` | 読む設定ファイルのパス | `${XDG_CONFIG_HOME:-~/.config}/ai-chat-logs/config.env` |
 
 これらは、リポジトリのルートの `.env` と、設定ファイル（GUI の管理画面が書く）にも書ける。値は、環境変数、`.env`、設定ファイル、既定の順に決まる（[ADR 0007](docs/adr/0007-settings-and-setup-screen.md)）。書式はどちらも同じ。
@@ -288,16 +289,16 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）への移行で、大きな文字列は `payloads` の表に、重複を除いて圧縮して移る。移した後の空きは、次からの取り込みで使いまわされるが、ファイルは縮まない。ファイルを縮めるときは、取り込みを止めて `VACUUM` を実行する。
 
 ```sh
-pm2 stop ai-chat-logs-sync
+pm2 stop ai-chat-logs-sync ai-chat-logs-codex-sync
 sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite VACUUM
-pm2 start ai-chat-logs-sync
+pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
 ```
 
 - `VACUUM` は、データベースと同じくらいの空き容量を一時的に使う。
 - 2026-11-08 の手元のデータベース（7.78 GB、84.5 万行）では、移行の変換が 38 秒、その後の `VACUUM INTO` が 10 秒かかり、5.33 GB になった（`records` が 5,767 MB から 2,359 MB に、`payloads` が 1,156 MB）。
 - GUI は読み取り専用で開くので、`VACUUM` の間は開いていてもよいが、待たされることがある。
 
-Codex の古いコピー（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残したもの）を除いてから縮めるときは、「Codex の古いコピーを除く」の手順で、取り込みを止める、`codex-store-dedupe --dry-run`、`codex-store-dedupe`、`VACUUM`、取り込みを再開する、の順に実行する（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+Codex の古いコピー（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残したもの）を除いてから縮めるときは、「Codex の古いコピーを除く」の手順で、取り込みを止める、`codex-store-dedupe --dry-run`、`codex-store-dedupe`、`VACUUM`、取り込みを再開する、の順に実行する。
 
 ### AI に履歴を引かせる（chat-log）
 
