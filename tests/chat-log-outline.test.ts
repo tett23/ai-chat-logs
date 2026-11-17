@@ -13,6 +13,15 @@ const SOLO = "solo0000-0000-0000-0000-000000000001";
 const LONG = "long0000-0000-0000-0000-000000000001";
 const AMB_A = "amb00000-0000-0000-0000-00000000000a";
 const AMB_B = "amb00000-0000-0000-0000-00000000000b";
+// docs/adr/0044: a session whose text outline is over 8,000 bytes by default.
+const MANY = "many0000-0000-0000-0000-000000000001";
+const EIGHTY = "eighty00-0000-0000-0000-000000000001";
+const body80 = (c: string, i: number) => `${c}${String(i).padStart(3, "0")}`.padEnd(80, c);
+const atMany = (i: number): string => new Date(Date.UTC(2026, 9, 2, 0, 0, i)).toISOString();
+const recMany = (i: number, role: string, content: unknown) => ({
+  type: role, uuid: `many-${String(i).padStart(4, "0")}`, sessionId: MANY, timestamp: atMany(i), cwd: "/work/outline", isSidechain: false, message: { role, content },
+});
+const many = Array.from({ length: 120 }, (_, k) => [recMany(2 * k + 1, "user", body80("q", k)), recMany(2 * k + 2, "assistant", [{ type: "text", text: body80("a", k) }])]).flat();
 
 const at = (i: number): string => `2026-10-01T00:${String(i).padStart(2, "0")}:00.000Z`;
 const rec = (session: string, i: number, role: string, content: unknown, sidechain = false) => ({
@@ -56,6 +65,8 @@ beforeAll(() => {
     ["solo.jsonl", jsonl(rec(SOLO, 1, "user", "一つだけ"))],
     ["long.jsonl", jsonl(rec(LONG, 1, "user", "あいうえおかきくけこ"), rec(LONG, 2, "assistant", text("あいうえおかきくけこさ")))],
     ["amb-a.jsonl", jsonl(rec(AMB_A, 1, "user", "A"))],
+    ["many.jsonl", jsonl(...many)],
+    ["eighty.jsonl", jsonl(rec(EIGHTY, 1, "user", "x".repeat(80)), rec(EIGHTY, 2, "user", "y".repeat(81)))],
     ["amb-b.jsonl", jsonl(rec(AMB_B, 1, "user", "B"))],
   ].map(([rel, content]) => ({ kind: "claude-code/transcript", path: writeFile(join(dir, "src", rel as string), content as string) }));
   const db = openDatabase(dbPath);
@@ -95,7 +106,7 @@ describe("chat-log outline", () => {
     }
   });
 
-  test("ADR 0043 I3, I6: a turn without a prompt, an empty first turn and a prompt without a reply", () => {
+  test("ADR 0043 I3, ADR 0044 I3: a turn without a prompt, an empty first turn and a prompt without a reply", () => {
     expect(entries(chatLog(["outline", SOLO]).out)).toEqual([`#1 user ${at(1)} 一つだけ`]);
     expect(entries(chatLog(["outline", PRE]).out)).toEqual([`#2 user ${at(2)} 始め`, `  #3 assistant ${at(3)} 終わり`]);
     const first = lines(chatLog(["outline", PRE, "--limit", "1"]).out);
@@ -119,12 +130,12 @@ describe("chat-log outline", () => {
     entries(chatLog(["outline", MIX]).out).forEach((l) => expect(l).not.toContain("\n"));
   });
 
-  test("ADR 0043 I6: --offset and --limit count turns and the continuation line resumes", () => {
-    const all = entries(chatLog(["outline", MIX]).out);
+  test("ADR 0044 I3: with --max-bytes 0, --offset and --limit count turns and the continuation line resumes", () => {
+    const all = entries(chatLog(["outline", MIX, "--max-bytes", "0"]).out);
     const turns = [[all[0]], [all[1], all[2]], [all[3]], [all[4], all[5]]];
     for (let a = 0; a <= 5; a++) {
       for (let b = 1; b <= 5; b++) {
-        const r = chatLog(["outline", MIX, "--offset", String(a), "--limit", String(b)]);
+        const r = chatLog(["outline", MIX, "--offset", String(a), "--limit", String(b), "--max-bytes", "0"]);
         expect(entries(r.out)).toEqual(turns.slice(a, a + b).flat());
         const more = lines(r.out).find((l) => l.startsWith("（続き："));
         expect(more).toBe(a + b < turns.length ? `（続き：chat-log outline ${MIX} --offset ${a + b}）` : undefined);
@@ -135,8 +146,8 @@ describe("chat-log outline", () => {
     );
   });
 
-  test("ADR 0043 I7: --json has the same entries as the text", () => {
-    const text = entries(chatLog(["outline", MIX]).out).map(entry);
+  test("ADR 0044 I6: --json has the same entries as the text without a byte limit", () => {
+    const text = entries(chatLog(["outline", MIX, "--max-bytes", "0"]).out).map(entry);
     const rows = lines(chatLog(["outline", MIX, "--json"]).out).map((l) => JSON.parse(l));
     expect(rows.map((x) => [x.index, x.role, x.text])).toEqual(text.map((e) => [e.index, e.role, e.body]));
     expect(Object.keys(rows[0])).toEqual(["index", "uuid", "timestamp", "role", "text", "truncated_from"]);
@@ -159,11 +170,86 @@ describe("chat-log outline", () => {
     expect(amb.err).toContain(`claude-code\t${AMB_B}`);
   });
 
-  test("ADR 0043 I10: the help explains outline", () => {
+  test("ADR 0044 I7: the help explains outline", () => {
     const help = chatLog(["outline", "--help"]).out;
-    ["--limit", "区切り", "100", "--max-chars", "200"].forEach((s) => expect(help).toContain(s));
+    ["--limit 100", "区切り", "--max-chars 80", "--max-bytes 8000"].forEach((s) => expect(help).toContain(s));
     const main = chatLog(["--help"]).out;
     const ids = main.slice(main.indexOf("利用者からIDを渡されたとき"), main.indexOf("使う順序の勧め"));
     expect(ids).toContain("chat-log outline <セッションID>");
+  });
+
+  // docs/adr/0044
+  const bytes = (out: string) => Buffer.byteLength(out, "utf8");
+  const nextOffset = (out: string): number | null => {
+    const m = /（続き：chat-log outline \S+ --offset (\d+)/.exec(out);
+    return m === null ? null : Number(m[1]);
+  };
+  const walk = (args: string[]): string[] => {
+    const seen: string[] = [];
+    for (let o: number | null = 0, guard = 0; o !== null && guard < 500; guard++) {
+      const out = chatLog(["outline", MANY, "--offset", String(o), ...args]).out;
+      seen.push(...entries(out));
+      o = nextOffset(out);
+    }
+    return seen;
+  };
+
+  test("ADR 0044 I1, I2, I3: --max-bytes stops at whole turns and the continuation lines cover every turn", () => {
+    const fullOut = chatLog(["outline", MANY, "--max-bytes", "0", "--limit", "1000"]).out;
+    const full = entries(fullOut);
+    expect(full).toHaveLength(240);
+    const total = bytes(fullOut);
+    const all = chatLog(["outline", MANY, "--max-bytes", String(total), "--limit", "1000"]);
+    expect(entries(all.out)).toEqual(full);
+    expect(nextOffset(all.out)).toBeNull();
+    const less = chatLog(["outline", MANY, "--max-bytes", String(total - 1), "--limit", "1000"]);
+    expect(bytes(less.out)).toBeLessThanOrEqual(total - 1);
+    expect(entries(less.out)).toEqual(full.slice(0, entries(less.out).length));
+    expect(nextOffset(less.out)).toBe(entries(less.out).length / 2);
+    for (const b of ["10", "300", "8000"]) {
+      for (const l of ["1", "5", "100"]) {
+        const first = chatLog(["outline", MANY, "--max-bytes", b, "--limit", l]).out;
+        const k = entries(first).length / 2;
+        expect(entries(first)).toEqual(full.slice(0, 2 * k));
+        if (k >= 2) expect(bytes(first)).toBeLessThanOrEqual(Number(b));
+        expect(walk(["--max-bytes", b, "--limit", l])).toEqual(full);
+      }
+    }
+    const tiny = chatLog(["outline", MANY, "--max-bytes", "10"]).out;
+    expect(entries(tiny)).toEqual(full.slice(0, 2));
+    expect(nextOffset(tiny)).toBe(1);
+    expect(lines(chatLog(["outline", MANY, "--offset", "120"]).out)).toHaveLength(1);
+    expect(lines(chatLog(["outline", MANY, "--max-bytes", "10", "--provider", "claude-code"]).out).at(-1)).toBe(
+      `（続き：chat-log outline ${MANY} --offset 1 --provider claude-code）`,
+    );
+    expect(lines(chatLog(["outline", PRE, "--max-bytes", "10"]).out)).toEqual([`# claude-code ${PRE} 始め（3 件、発言 1 件）`, `（続き：chat-log outline ${PRE} --offset 1）`]);
+  }, 300_000);
+
+  test("ADR 0044 I1: the default output of a long session stays within 8,000 bytes", () => {
+    const out = chatLog(["outline", MANY]).out;
+    expect(bytes(out)).toBeLessThanOrEqual(8000);
+    expect(nextOffset(out)).not.toBeNull();
+  });
+
+  test("ADR 0044 I4: bodies are cut at 80 characters by default", () => {
+    expect(entries(chatLog(["outline", EIGHTY]).out).map((l) => entry(l).body)).toEqual(["x".repeat(80), `${"y".repeat(80)}…（81 文字のうち 80 文字）`]);
+  });
+
+  test.each([
+    [["outline", MANY, "--json", "--max-bytes", "100"]],
+    [["outline", MANY, "--json", "--max-bytes", "0"]],
+    [["show", MANY, "--max-bytes", "100"]],
+    [["outline", MANY, "--max-bytes", "-1"]],
+    [["outline", MANY, "--max-bytes", "abc"]],
+  ])("ADR 0044 I5: %p is a usage error", (args) => {
+    const r = chatLog(args as string[]);
+    expect(r.code).toBe(2);
+    expect(r.out).toBe("");
+  });
+
+  test("ADR 0044 I6: --json is not limited by bytes", () => {
+    const rows = lines(chatLog(["outline", MANY, "--json", "--limit", "1000"]).out);
+    expect(rows).toHaveLength(entries(chatLog(["outline", MANY, "--max-bytes", "0", "--limit", "1000"]).out).length);
+    expect(rows.length).toBeGreaterThan(entries(chatLog(["outline", MANY, "--limit", "1000"]).out).length);
   });
 });
