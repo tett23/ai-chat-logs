@@ -1,6 +1,6 @@
 # ADR 0043: chat-log で長いセッションの流れを短く出す
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
