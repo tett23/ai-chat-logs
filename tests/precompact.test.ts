@@ -81,7 +81,7 @@ describe("ADR 0038 pre-compaction capture", () => {
       expect(search.exitCode).toBe(0);
       expect(search.stdout.toString()).toContain("saved before compaction");
       expect(f.run("codex", path, trigger).exitCode).toBe(0);
-      expect(readdirSync(f.store)).toHaveLength(1);
+      expect(readdirSync(f.store).filter((name) => name !== ".lock.sqlite")).toHaveLength(1);
       expect(db.query("SELECT count(*) AS n FROM session_messages WHERE provider = 'codex'").get()).toEqual(before);
       expect(Bun.spawnSync(["/bin/sh", join(repoRoot, "bin/sync-codex")], { env: f.env }).exitCode).toBe(0);
       expect(db.query("SELECT count(*) AS n FROM session_messages WHERE provider = 'codex'").get()).toEqual(before);

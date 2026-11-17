@@ -1,6 +1,6 @@
 # ADR 0037: Codex の会話一覧と暗号化項目の表示を整理する
 
-Status: accepted
+Status: superseded [{"part":"同じ大きさの代表の選び方","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"新しいスナップショットを取り込んだときの再計算","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]}]
 
 ## 文脈
 

@@ -1,6 +1,6 @@
 # ADR 0031: 記録の中の大きな文字列を、重複を除いて圧縮した別の表に移す
 
-Status: accepted
+Status: superseded [{"part":"payloads の行は消さない","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]}]
 
 ## 文脈
 

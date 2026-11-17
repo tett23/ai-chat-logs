@@ -1,6 +1,6 @@
 # ADR 0034: Codex のローカルログを取り込む
 
-Status: accepted
+Status: superseded [{"part":"同じハッシュの保存先が公開済みなら再変換しない","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"公開済みファイルを上書きしない","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"manifest の原本のハッシュ","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"入力が伸びた場合の別のスナップショット","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"スナップショット間の差分保存をしない","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"実装しないこと: スナップショットの自動削除、差分だけを保存する最適化","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"不変条件 P6","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]}]
 
 ## 文脈
 

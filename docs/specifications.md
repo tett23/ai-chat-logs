@@ -14,8 +14,9 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-log-sources`（`src/cli/sources.ts`） | なし | Claude の取り込む対象の、`<種類><タブ><絶対パス>` の行（パスの順） |
 | `chat-log-import`（`src/cli/import.ts`） | 標準入力に `claude-log-sources` の形の行 | 標準エラー出力に、失敗ごとの `error<タブ><パス><タブ><理由>` と、要約の `run=… sources=… records=… blobs=… errors=…` |
 | `claude-ai-export-scan`（`src/cli/claude-ai-export-scan.ts`） | なし | 受け取り用のディレクトリの新しい claude.ai のエクスポートを変換し、出力先を1行ずつ書く（[ADR 0010](adr/0010-scan-downloads-for-claude-ai-exports.md)） |
-| `codex-log-convert`（`src/cli/codex-log-convert.ts`） | 設定したログディレクトリ | Codex の原本と変換 JSONL を保存する |
-| `codex-log-sources`（`src/cli/codex-log-sources.ts`） | 設定した保存先 | Codex の `<種類><タブ><絶対パス>` を列挙する |
+| `codex-log-convert`（`src/cli/codex-log-convert.ts`） | 設定したログディレクトリ | Codex の原本と変換 JSONL を保存先に保存するか追記する |
+| `codex-log-sources`（`src/cli/codex-log-sources.ts`） | 設定した保存用ディレクトリ | Codex の `<種類><タブ><絶対パス>` を列挙する。manifest の壊れた保存先は列挙せず、標準エラー出力に書き、終了コードは変えない（ほかの保存先は列挙する） |
+| `codex-store-dedupe`（`src/cli/codex-store-dedupe.ts`） | `--dry-run`（省略可） | いまある Codex のスナップショット（下の「Codex の原本と変換」）の重複を一度だけ除く（下の「Codex の重複の整理」） |
 | `bin/sync` | なし | claude.ai のスキャン、Codex の変換、全提供元の列挙、取り込みを行う。列挙に失敗したら取り込まず、スキャンや変換の部分失敗では残りを取り込み、最後に1を返す |
 
 `chat-log-import` は、失敗が1つでもあれば終了コード1で終わる。不明な種類の行も失敗とする。
@@ -48,13 +49,20 @@ ai-chat-logs の現行の仕様をまとめる。
 [ADR 0034](adr/0034-import-codex-rollouts.md)
 
 - `AI_CHAT_LOGS_CODEX_DIR` の `sessions` と `archived_sessions` 以下の通常ファイル `*.jsonl` を再帰的に読む。シンボリックリンクは辿らない。存在しないディレクトリは空、読めないものは失敗にする。
-- 完成した改行までのバイト列を SHA-256 の64桁で識別し、`AI_CHAT_LOGS_CODEX_STORE/<hash>/` に原本、`messages-v1.jsonl`、`manifest-v1.json` を保存する。一時ディレクトリから rename して公開し、ディレクトリは0700、ファイルは0600で保持する。
+- 元のファイルの完成した改行までのバイト列を入力とする。保存用ディレクトリ（`AI_CHAT_LOGS_CODEX_STORE`）の直下の、名前が SHA-256 の16進64桁のディレクトリを保存先と呼ぶ。[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md) より前の規則で作られた保存先を、スナップショットと呼ぶ。保存先には、原本の写し `rollout.jsonl`、変換結果 `messages-v1.jsonl`、manifest を置く。ディレクトリは0700、ファイルは0600で保持する（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+- manifest は `manifest-v2.json` である。`manifest-v1.json` だけを持つ保存先は、[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md) より前に作られたもので、両方を持つときは `manifest-v2.json` を正とする。`manifest-v2.json` は、変換器の版、作ったときの元のファイルのパス（`sourcePath`）、`rollout.jsonl` の1行目の SHA-256、公開した範囲（`rollout.jsonl` のバイト数、行数、SHA-256 と、`messages-v1.jsonl` のバイト数）、`custom-title` でない変換行の数、その `sourceOrder` の最大、最後のタイトル、会話の数、警告の件数、変換の終了コードを持つ。ファイルの先頭から manifest のバイト数までを公開した範囲といい、`manifest-v1.json` だけの保存先はファイル全体が公開した範囲である。
+- 保存先の名前は、作ったときの内容の SHA-256 で、後から追記しても変えない。
+- 保存先は、入力の1行目の SHA-256 が同じ保存先を候補として、次の順に決める。入力が空なら、0行の保存先を作るか同じ名前のものを使い、追記の対象にしない。候補の公開した範囲の先頭が入力と一致すれば、何もしない（終了コードは候補の manifest の終了コード）。公開した範囲が入力の先頭と一致する候補があれば、公開した範囲の最も大きいもの（同じなら名前の辞書順で最小のもの）に追記する。どれでもなければ（元のファイルが書きかえられたときを含む）、一時ディレクトリから rename して新しい保存先を公開する。一致は SHA-256 で確かめる。
+- 追記では、公開していない範囲を切り詰め、伸びた行を `rollout.jsonl` に、元のファイルの先頭から入力の終わりまでを変換した結果のうち `sourceOrder` が前回の最大より大きい行を `messages-v1.jsonl` に書く。タイトルが前と違えば、その `custom-title` の行も書く。両方を `fsync` した後に、`manifest-v2.json` を一時ファイルから rename で置きかえる。公開した範囲は書きかえない。`manifest-v1.json` だけの保存先には、書く前にファイル全体を公開した範囲とする `manifest-v2.json` を置く。警告は、伸びた行のものだけを出す。
+- 保存先を決め、作り、追記する処理は、元のファイル1つごとに、保存用ディレクトリの `.lock.sqlite`（表の無い SQLite のデータベース）の `BEGIN EXCLUSIVE` を排他ロックとして取ってから行う。`bin/sync`、`bin/sync-codex`、圧縮直前の取り込み、`codex-store-dedupe` が取る。5秒待っても取れなければ、その元のファイルを飛ばし、変換を終了コード1にする。プロセスが止まると OS がロックを外す。
+- `manifest-v2.json` が JSON として読めないか、必要なキーが無いか、`rolloutBytes` か `messagesBytes` がそれぞれのファイルの大きさを超える保存先は、候補にも列挙にも入れず、変換の失敗（終了コード1）として報告する。
+- `manifest-v1.json` だけを持ち、その manifest が正しくない保存先と、manifest の無い名前が16進64桁のディレクトリも、変換が候補を探すときに出会えば、候補に入れず変換の失敗（終了コード1）として報告する。列挙は、前者を標準エラー出力に書き、後者を黙って飛ばす。
 - 先頭の `session_meta.payload.id` が会話 ID。後続のメタデータや `payload.session_id` で切り替えない。親から継承された履歴もそのファイルの記録として残す。
 - 変換行は `codex/conversation`、原本の行は `codex/rollout`。前者は既存と同じ `type`、`uuid`、`sessionId`、`timestamp`、`message` を持つ。元の位置は `sourceOrder` と `openai` に保持する。
 - user と assistant のテキスト、公開された reasoning summary、ツールの入出力、agent_message を変換する。event_msg を本文に加えない。system と developer や補助情報は原本だけに残す。
 - uuid は提供元、会話 ID、元の項目 ID、表示内容、role、親 ID、ブロックの種類を正規化した JSON の SHA-256。パスと取り込み時刻は含めない。元 IDが無い場合は物理行番号を使う。同文でも元 IDが異なれば別項目、内容が変われば別の版になる。
 - 未知の型と暗号化は警告として原本に残す。壊れた JSONや先頭の会話 ID の欠落は変換の終了コード1とし、正常な独立入力は続ける。末尾の未完行は次回に回す。
-- 同じ入力は再利用する。伸びたログは全体の新しいスナップショットとして保持する。自動削除や差分だけの保存はしない。
+- 同じ入力は再利用する。伸びたログは、伸びた分だけを同じ保存先に追記する。書きかえられた元のファイルは、新しい保存先に全体を保存する。保存先の自動の削除はしない。
 
 ### 行ごとの取り込み
 
@@ -71,6 +79,7 @@ ai-chat-logs の現行の仕様をまとめる。
 | `claude-cowork/audit` | `$.type` | `$.uuid` | `$.session_id` | `$._audit_timestamp`（文字列のまま） |
 - ファイルが `consumed_bytes` より短くなったか、先頭 `min(4096, consumed_bytes)` バイトの SHA-256 が変わったら、書きかえとみなし、`generation` を上げた `sources` の行を作って先頭から読む。前の版の行は残す。
 - 1ファイルを1つのトランザクションで取り込む。
+- `codex/rollout` と `codex/conversation` は、保存先の公開した範囲までしか読まない。ファイルの大きさを得てから、同じ保存先の `manifest-v2.json` を読み、あれば `rollout.jsonl` は `rolloutBytes`、`messages-v1.jsonl` は `messagesBytes` と、ファイルの大きさの小さいほうを、無ければ大きさを、ファイルの大きさの代わりに、書きかえの判定、読む範囲の終わり、`sources.size` に使う。保存先に追記された行は、同じ取り込み元に足される（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 
 ### ファイルごとの取り込み
 
@@ -78,7 +87,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ### 消えたファイル
 
-`--mark-missing` を付けると、標準入力に無い取り込み済みのパスの `sources.missing_since` に時刻を入れる。行は消さない。再び取り込むと NULL に戻る。
+`--mark-missing` を付けると、標準入力に無い取り込み済みのパスの `sources.missing_since` に時刻を入れる。行は消さない。再び取り込むと NULL に戻る。取り込み済みの行を消すのは、`codex-store-dedupe` だけである（下の「Codex の重複の整理」）。
 
 ### データベース
 
@@ -124,7 +133,7 @@ ai-chat-logs の現行の仕様をまとめる。
 [ADR 0031](adr/0031-store-large-strings-as-compressed-payloads.md)
 
 - 取り込んだ行の JSON の文字列のうち、リテラル（両端の `"` とエスケープを含む、`raw` の中のバイト列）が 1024 バイト以上で、SQL が読む場所に無いものを `payloads` に移す。SQL が読む場所：最上位のメンバーの値、`$.message` の直下のメンバーの値、`$.message.content[*]` の `type`、`text`、`thinking`。`tool_result` の `content`、`tool_use` の `input` の中の文字列、画像の `data`、思考の `signature` などは移る。オブジェクトのキーは移さない。
-- `payloads` の行はリテラルの SHA-256 で重複を除く。`base64`：リテラルが標準の base64（`=` の埋めを含み、改行もエスケープも無い）だけで、復号して符号化しなおすと同じになるもの。中身は復号したバイナリ。`zstd`：それ以外。中身はリテラルを zstd（レベル3）で圧縮したもの。消さない。
+- `payloads` の行はリテラルの SHA-256 で重複を除く。`base64`：リテラルが標準の base64（`=` の埋めを含み、改行もエスケープも無い）だけで、復号して符号化しなおすと同じになるもの。中身は復号したバイナリ。`zstd`：それ以外。中身はリテラルを zstd（レベル3）で圧縮したもの。消さない。ただし `codex-store-dedupe` は、どの `records.raw` からも指されない行を消す（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 - `raw` のリテラルは、目印のリテラル `"\u0000ai-chat-logs-payload:<sha256>"` に置きかえる。置きかえた後も正しい JSON である。戻すときは目印を文字列として置きかえるので、取り込んだ行とバイト単位で同じになる。取り込みでは、戻したものが元の行と同じになることを確かめ、同じでなければ移さない。正しい JSON でない行と、元から `\u0000ai-chat-logs-payload:` を含む行からは移さない。
 - `payload_state`：`NULL` はまだ処理していない、`0` は移したものが無い、`1` は `raw` に目印がある。
 - 取り込みでは、行を元のまま入れて索引と要約を作った後に、同じトランザクションの中で移す。`chat-log-import` は取り込みの後に、`payload_state` が `NULL` の行（スキーマ 6 より前に取り込んだもの）を、1万行ずつのトランザクションで移す。
@@ -138,7 +147,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 - 会話の種類：`claude-code/transcript`、`claude-cowork/transcript`、`claude-ai/conversation`、`codex/conversation`。
 - 本文：会話の種類の `user` と `assistant` のレコードの、文字列の `message.content`、または `text` と `thinking` のブロックを改行でつないだもの。`tool_use` と `tool_result` は入れない。空なら入れない。
-- 写し：同じ提供元・セッションID・`uuid`（Codex は種類も一致）のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。
+- 写し：同じ提供元・セッションID・`uuid`（Codex は種類も一致）のレコードが複数のファイルにあれば、パス、`generation`、行番号の順で最初のものだけを、会話・検索・要約で使う。`uuid` の無いレコードは除かない。`records` と `record_texts` からは消さない。例外として、`codex-store-dedupe` は、残す保存先に同じ行がある Codex のスナップショットの行を、索引の行とともに消し、影響したセッションの要約を作りなおす（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 - 要約：メッセージが1つ以上あるセッションだけ。`first_at`・`last_at` はメッセージの時刻の最小と最大、`cwd` は時刻の順で最初のもの。
 - タイトル：最後の `custom-title`（パスと行番号の順）、無ければセッションのファイルの最新の版の `title`（`cliSessionId` で対応。`claude-code` は `claude-desktop/session`、`claude-cowork` は `claude-cowork/session`）、無ければ最初の `isMeta` でない `user` の本文の先頭80文字。
 - 行を取り込むたびに、増えた行の本文とツールのテキストを索引に足し、増えた行のセッションの要約を作りなおす。デスクトップアプリのセッションの版が増えたら、その `cliSessionId` のセッションの要約を作りなおす。
@@ -193,6 +202,7 @@ ai-chat-logs の現行の仕様をまとめる。
 - 一覧、検索結果、ヘッダーの表示名は Claude Code、claude.ai、Cowork、Codex。未知の提供元は内部識別子を表示する。タイトルは書き換えない。
 - Codex の選択肢は作業ディレクトリ単位。`cwd_missing` が真なら値なしの会話だけを選ぶ。偽または省略は従来どおりで、非 NULL の `cwd`と同時に真を指定した場合は入力エラーにする。
 - 取り込みはGUI 全体で同時に1件だけ。画面切り替え後も排他を維持する。環境の検査だけでは入力、設定、DBを変更しない。
+- 会話の代表の保存先は、`codex/rollout` の取り込み済みのバイト数の最も大きいもの、同じなら保存先の名前の辞書順で最小のもので、その名前を「代表スナップショットのハッシュ」として記録する。保存先に行が追記されて取り込まれたときも、代表と項目の情報を作りなおす（[ADR 0037](adr/0037-codex-session-presentation.md)、[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 
 ## 定期実行
 
@@ -276,7 +286,7 @@ ai-chat-logs の現行の仕様をまとめる。
 
 [ADR 0008](adr/0008-install-compiled-commands.md)
 
-- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`codex-log-convert`、`codex-log-sources`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
+- `bin/install [<インストール先>]`（既定は `~/.local/bin`）。`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`codex-log-convert`、`codex-log-sources`、`codex-store-dedupe`、`chat-log` を `bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig` で実行ファイルにし、`ai-chat-logs-sync` を写す。置いたファイルのパスを1行ずつ標準出力に書く。一時ファイルから名前を変えて置きかえる。
 - リポジトリの絶対パスを `--define AI_CHAT_LOGS_REPO_AT_BUILD=...` で埋めこむ（環境変数 `AI_CHAT_LOGS_REPO_AT_BUILD` で変えられる）。実行ファイルの `.env` の既定の場所は、埋めこんだリポジトリの `.env`。
 - `ai-chat-logs-sync`：同じディレクトリの `claude-ai-export-scan` と `codex-log-convert` を実行してから、`claude-log-sources` と `codex-log-sources` の全出力を受けて `chat-log-import --mark-missing` に渡す。引数は `chat-log-import` に渡す。スキャンや変換が失敗しても続け、最後に終了コード1を返す。
 
@@ -296,12 +306,25 @@ ai-chat-logs の現行の仕様をまとめる。
 
 ## Codex の会話表示
 
-[ADR 0037](adr/0037-codex-session-presentation.md) に従い、スキーマ 8 では保存済みの原本から会話の種類、表示タイトル、暗号化されたブロックの位置を再生成できる。GUI は種類で絞ってから件数とページを決める。通常表示には他の提供元と分類不明の Codex も含む。暗号化された箇所を隠しても元の項目番号は変えない。検索では該当ブロックを除いた本文で照合する。CLI の一覧、検索、書き出しは従来どおりとする。
+[ADR 0037](adr/0037-codex-session-presentation.md) に従い、スキーマ 8 では保存済みの原本から会話の種類、表示タイトル、暗号化されたブロックの位置を再生成できる。代表の保存先は、取り込み済みのバイト数が最も大きく、同じなら名前の辞書順で最小のものである。保存先に追記された行を取り込んだときも、代表と項目の情報を作りなおす（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。GUI は種類で絞ってから件数とページを決める。通常表示には他の提供元と分類不明の Codex も含む。暗号化された箇所を隠しても元の項目番号は変えない。検索では該当ブロックを除いた本文で照合する。CLI の一覧、検索、書き出しは従来どおりとする。
 
 ## Codex の毎時収集
 
-[ADR 0036](adr/0036-codex-hourly-collection.md) に従い、全提供元の4時間ごとの取り込みとは別に、既定で毎時30分に Codex を収集する。専用ジョブは変換後に Codex の入力だけを列挙し、列挙に成功した場合だけ取り込む。変換に失敗しても公開済みの入力を取り込み、失敗を終了コードで知らせる。専用ジョブでは行方不明の入力を判定しない。
+[ADR 0036](adr/0036-codex-hourly-collection.md) に従い、全提供元の4時間ごとの取り込みとは別に、既定で毎時30分に Codex を収集する。専用ジョブは変換後に Codex の入力だけを列挙し、列挙に成功した場合だけ取り込む。変換に失敗しても公開済みの入力を取り込み、失敗を終了コードで知らせる。専用ジョブでは行方不明の入力を判定しない。全提供元の取り込みと同時に変換しても、保存用ディレクトリのロックで1つずつ保存先を決めて追記し、ロックを5秒待っても取れなかった元のファイルは次の実行で追記する（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 
 ## 圧縮直前の取り込み
 
-Codex と Claude Code の手動・自動圧縮時に、`ai-chat-logs-precompact codex` または `ai-chat-logs-precompact claude-code` が標準入力の `transcript_path` で指定された通常ファイルを取り込む。Codex は sessions と archived_sessions 以下の JSONL の完成行をスナップショットに保存し、原本と検索用メッセージを SQLite に取り込む。Claude Code は projects 以下の transcript を定期取り込みと同じ位置から最後の改行まで取り込む。他のソースの欠落状態を変更しない。標準出力は空で、成功時は 0、失敗時は理由を標準エラーに出して 1 を返す（[ADR 0038](adr/0038-save-logs-before-compaction.md)）。
+Codex と Claude Code の手動・自動圧縮時に、`ai-chat-logs-precompact codex` または `ai-chat-logs-precompact claude-code` が標準入力の `transcript_path` で指定された通常ファイルを取り込む。Codex は sessions と archived_sessions 以下の JSONL の完成行を、定期取り込みと同じロックと規則で保存先に保存するか追記し（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）、その保存先の原本と検索用メッセージを SQLite に取り込む。Claude Code は projects 以下の transcript を定期取り込みと同じ位置から最後の改行まで取り込む。他のソースの欠落状態を変更しない。標準出力は空で、成功時は 0、失敗時は理由を標準エラーに出して 1 を返す（[ADR 0038](adr/0038-save-logs-before-compaction.md)）。
+
+## Codex の重複の整理
+
+`codex-store-dedupe` は、同じ元のファイルから作られたスナップショットの重複を一度だけ除く（[ADR 0041](adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+`bin/sync` からは実行しない。
+pm2 の `ai-chat-logs-sync` と `ai-chat-logs-codex-sync` を止めてから実行し、後で `VACUUM` を手で実行する。
+
+- `sourcePath` ごとに、`rollout.jsonl` の公開した範囲の最も大きい保存先（同じなら名前の辞書順で最小のもの）を残す。残す保存先の2つの取り込み元のどちらかが DB に無いか、`generation` が2つ以上あれば、その `sourcePath` では何も消さない。
+- ほかの保存先は、`rollout.jsonl` が残す保存先の先頭と一致し、取り込み元が DB にあればその `generation` が1つだけで、`codex/rollout` の各行の `raw`（ペイロードを戻したもの）が残す保存先の同じ行番号の行と一致し、`codex/conversation` の `custom-title` でない各行の `raw` が残す保存先の行のどれかと一致するときだけ消す。DB に取り込み元の無い保存先は、`rollout.jsonl` の条件だけで消す。消さない保存先は、理由を出す。
+- 手順：残す保存先に `manifest-v2.json` を作る。消す保存先の名前を `.dedupe-<元の名前>` に変える（この名前は列挙されず、候補にもならない）。`sourcePath` ごとに1つのトランザクションで、消す保存先の取り込み元の `records`、`record_texts`、`record_tool_texts`、`sources` の行を消し、影響したセッションの要約と Codex の表示用のデータを作りなおす。すべての後に、`payload_state` が1のどの `records.raw` も指さない `payloads` の行を消す。最後に、取り込み元が DB に無い `.dedupe-` の保存先を消す。消す保存先を決める判定、`manifest-v2.json` の作成、名前の変更、`.dedupe-` の保存先の削除は、保存用ディレクトリのロックを取って行う。DB の行を消す手順はロックを取らない。
+- 途中で止まっても、もう一度実行すれば、止めずに実行したときと同じ DB と保存用ディレクトリになる。`.dedupe-` の保存先は、名前を変えた後の状態として続ける。
+- `--dry-run` は、DB も保存用ディレクトリも変えず（ロックも取らない）、消す予定の保存先（取り込み元、行の数、`raw` のバイト数、保存先のバイト数）、消さない保存先とその理由、いまどの `records.raw` からも指されていないペイロードの数（消す予定の行だけが指すペイロードは数えない）を出す。DB のスキーマが今の版でなければ失敗する。`--dry-run` でない実行は、DB を今の版に移行してから動く。
+- 出力：標準出力に、消す保存先ごとの `deleted`（`--dry-run` では `would-delete`）`<タブ><保存先><タブ><sourcePath><タブ>sources=…<タブ>records=…<タブ>raw_bytes=…<タブ>store_bytes=…` と、消さない保存先ごとの `kept<タブ><保存先><タブ><sourcePath><タブ><理由>`。残す保存先も `kept` の行に出す。manifest の読めない保存先は、`sourcePath` を `-` とする。標準エラー出力に要約。失敗したら終了コード1、引数の誤りは2。

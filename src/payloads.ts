@@ -97,6 +97,9 @@ const payloadOf = (literal: string, bytes: Uint8Array): Payload => {
 export const literalOf = ({ encoding, content }: StoredPayload): string =>
   encoding === "base64" ? `"${Buffer.from(content).toString("base64")}"` : decoder.decode(Bun.zstdDecompressSync(content));
 
+// docs/adr/0041: the SHA-256 of the payloads a stored raw points to.
+export const payloadReferences = (raw: string): string[] => [...raw.matchAll(MARKER)].map((m) => m[1] as string);
+
 export const restorePayloads = (raw: string, lookup: (sha256: string) => StoredPayload | null): string =>
   raw.replace(MARKER, (_, sha256: string) => {
     const payload = lookup(sha256);
