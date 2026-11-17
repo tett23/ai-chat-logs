@@ -81,11 +81,11 @@ GUI はスキーマ 8、読み出し用の `chat-log` は 7 以降を使用す�
 既存の記録、検索索引、要約は保持する。
 この版の `chat-log` と GUI はスキーマ 7 が必要になる。
 
-1. `pm2 stop ai-chat-logs-sync` で定期取り込みを止め、GUI からの取り込みも終了させる。
+1. `pm2 delete ai-chat-logs-sync ai-chat-logs-codex-sync` で定期取り込みを止め、GUI からの取り込みも終了させる。`pm2 stop` では、cron の時刻に pm2 がジョブを起動しなおす。
 2. SQLite のバックアップ機能で退避する。既定の DBなら `sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite '.backup /absolute/path/logs-before-v7.sqlite'` とする。稼働中の DB本体だけをコピーしない。
 3. 復旧用に旧 CLI と GUI を別の場所へ保存してから、新しい CLI と GUI をビルドし、インストールする。
 4. `bin/sync` を1回実行する。最初の取り込みでマイグレーションが適用される。
-5. 新しい GUI と `chat-log` で既存の会話と検索を確認し、`pm2 start ai-chat-logs-sync` で定期取り込みを再開する。
+5. 新しい GUI と `chat-log` で既存の会話と検索を確認し、`pm2 start ecosystem.config.cjs` と `pm2 save` で定期取り込みを再開する。
 
 移行後に旧バイナリを使わない。
 戻す場合はすべての取り込みと GUIを終了させ、バックアップと旧バイナリを対で復元する。
@@ -155,8 +155,8 @@ codex-log-sources | chat-log-import
 インストールしていなければ、`codex-store-dedupe` の代わりに `bun src/cli/codex-store-dedupe.ts` を使う。
 
 ```sh
-# 1. 取り込みを止める
-pm2 stop ai-chat-logs-sync ai-chat-logs-codex-sync
+# 1. 取り込みを止める（pm2 stop では、cron の時刻に pm2 がジョブを起動しなおす）
+pm2 delete ai-chat-logs-sync ai-chat-logs-codex-sync
 # 2. 消す予定を確かめる（何も変えない）
 codex-store-dedupe --dry-run
 # 3. 実行する
@@ -164,11 +164,12 @@ codex-store-dedupe
 # 4. データベースを縮める
 sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite VACUUM
 # 5. 取り込みを再開する
-pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
+pm2 start ecosystem.config.cjs
+pm2 save
 ```
 
 - 途中で止まっても、もう一度実行すれば続きから終わる。
-- 圧縮の直前の取り込みは止められないが、保存用ディレクトリのロックで重ならない。
+- 圧縮の直前の取り込みは止められないが、保存用ディレクトリのロックで重ならない。ロックを5秒待っても取れなければ止まるので、もう一度実行する。
 - 実行の前に、データベースと保存用ディレクトリのバックアップを取っておくとよい。
 
 ## コンテキスト圧縮の直前に取り込む
@@ -287,11 +288,13 @@ sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite \
 ### データベースを縮める
 
 スキーマ 6（[ADR 0031](docs/adr/0031-store-large-strings-as-compressed-payloads.md)）への移行で、大きな文字列は `payloads` の表に、重複を除いて圧縮して移る。移した後の空きは、次からの取り込みで使いまわされるが、ファイルは縮まない。ファイルを縮めるときは、取り込みを止めて `VACUUM` を実行する。
+`pm2 stop` では、cron の時刻に pm2 がジョブを起動しなおすので、`pm2 delete` で止める。
 
 ```sh
-pm2 stop ai-chat-logs-sync ai-chat-logs-codex-sync
+pm2 delete ai-chat-logs-sync ai-chat-logs-codex-sync
 sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite VACUUM
-pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
+pm2 start ecosystem.config.cjs
+pm2 save
 ```
 
 - `VACUUM` は、データベースと同じくらいの空き容量を一時的に使う。
