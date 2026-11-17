@@ -1,6 +1,6 @@
 # ADR 0045: `-wal` のファイルが無いときも、chat-log と GUI がデータベースを開ける
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 
