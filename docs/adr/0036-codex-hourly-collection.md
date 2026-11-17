@@ -1,6 +1,6 @@
 # ADR 0036: Codex のログを1時間ごとに収集する
 
-Status: accepted
+Status: superseded [{"part":"実装しないこと: スナップショットの削除、差分保存","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"実装しないこと: 独自のスケジューラや実行ロックの追加","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]},{"part":"公開の競合の扱い","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]}]
 
 ## 文脈
 

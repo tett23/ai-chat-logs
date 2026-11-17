@@ -1,6 +1,6 @@
 # ADR 0001: Claude のチャット履歴を SQLite に取り込む
 
-Status: superseded [{"by":["docs/adr/0006-import-cowork-and-claude-ai-chats.md"],"part":"Claude 以外の会話（Cowork と claude.ai）の取り込み"},{"by":["docs/adr/0010-scan-downloads-for-claude-ai-exports.md"],"part":"bin/sync での claude.ai のエクスポートの自動の取り込み"}]
+Status: superseded [{"by":["docs/adr/0006-import-cowork-and-claude-ai-chats.md"],"part":"Claude 以外の会話（Cowork と claude.ai）の取り込み"},{"by":["docs/adr/0010-scan-downloads-for-claude-ai-exports.md"],"part":"bin/sync での claude.ai のエクスポートの自動の取り込み"},{"part":"取り込み済みの行は消さない","by":["docs/adr/0041-append-codex-snapshots-instead-of-copying.md"]}]
 
 ## 文脈
 
