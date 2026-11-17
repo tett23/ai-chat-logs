@@ -119,7 +119,28 @@ chat-log export [<セッションID>] --message <メッセージID>
     ## #<番号> <役割> <時刻> [<モデル>] [(サブエージェント)]
     <本文>`;
 
-export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, export: EXPORT };
+// docs/adr/0043
+const OUTLINE = `chat-log outline <セッションID> [--provider <名前>] [--limit <数>] [--offset <数>] [--max-chars <数>] [--json]
+  長いセッションの流れを短く見る。セッションの発言と、それぞれへの最後の応答だけを1行ずつ出す。
+  発言: 役割が user で、サブエージェントのものでなく、テキストを持つメッセージ（利用者が打ったものかは問わない。
+        <task-notification> などで始まるものも出る）。
+  区切り: 1つの発言から次の発言の直前まで。最初の発言より前のメッセージも1つの区切りとする。
+  応答: 区切りの中で、役割が assistant で、サブエージェントのものでなく、テキストを持つ最後のメッセージ。
+  本文はテキストを1行にしたもの。思考、ツールの入出力、サブエージェントのメッセージは出さない。
+  --limit と --offset は区切りを数える（何も出さない区切りも数える）。
+  既定: --limit 100、--max-chars 200
+  出力:
+    # <提供元> <セッションID（全体）> <タイトル>（<メッセージの数> 件、発言 <発言の数> 件）
+    #<番号> user <時刻> <本文>
+      #<番号> assistant <時刻> <本文>
+    （続き：chat-log outline <セッションID> --offset <数>）  ← 区切りが残るときだけ。そのまま実行できる
+  番号は show と同じ。要るところは chat-log show <セッションID> --around <番号> で読む。
+  --json: 発言と応答を1行ずつ。index、uuid、timestamp、role、text、truncated_from（切ったときの元の文字数、切らなければ null）。
+          text には「…（N 文字のうち M 文字）」を付けない。見出しと続きの行は出さない。
+  --around、--message、--range、--thinking、--tools、--cwd、--since、--until、--all、--messages、--session、--exclude とは
+  併用できない（終了コード2）。`;
+
+export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, outline: OUTLINE, export: EXPORT };
 
 // docs/adr/0042: the terms are shown in the overview and in every subcommand's help.
 export const TERMS = `用語:
@@ -137,6 +158,7 @@ const SUMMARY: Record<string, string> = {
   sessions: "セッションの一覧を新しい順に出す。",
   search: "本文を全文検索し、ヒットを <ID>#<番号> で出す。",
   show: "1つのセッションのメッセージを順に出す。メッセージIDで前後も出せる。",
+  outline: "1つのセッションの発言と、それぞれへの最後の応答を1行ずつ出す。長いセッションの流れを見る。",
   export: "1つのセッションか1つのメッセージを Markdown の全文で出す。",
 };
 const width = Math.max(...Object.keys(HELP).map((k) => k.length));
@@ -149,7 +171,8 @@ export const MAIN_HELP = `chat-log: Claude と Codex の会話の履歴を引く
 AI のエージェントが、過去の経緯や決定を思い出して文脈を戻すために使う。
 
 利用者からIDを渡されたとき（利用者が GUI でコピーしたもの）:
-  セッションID   chat-log show <セッションID>                    最初から読む
+  セッションID   chat-log outline <セッションID>                 流れを短く見る（要るところは show --around <番号> で読む）
+                 chat-log show <セッションID>                    最初から読む
                  chat-log search <語> --session <セッションID>   そのセッションの中を探す
   メッセージID   chat-log show --message <メッセージID>          その前後を読む（--range で広げる）
   どちらの ID かわからないときは、まず show --message で試し、終了コード1ならセッションIDとして show に渡す。
@@ -181,6 +204,7 @@ ${TERMS}
   chat-log search ADR 写し --cwd .
   chat-log show 5a1e0a3b --around 120
   chat-log show --message 98d7f31b --range 3:10
+  chat-log outline 5a1e0a3b
   chat-log search pm2 --session 5a1e0a3b
   chat-log search pm2 --since 2026-10-01 --until 2026-10-08
   chat-log search 写し --exclude 写して --exclude 写す

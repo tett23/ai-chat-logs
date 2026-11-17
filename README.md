@@ -314,6 +314,7 @@ bun src/cli/chat-log.ts show f0f40b1f --provider claude-code --around 563   # �
 bun src/cli/chat-log.ts search pm2 --since 2026-10-01 --until 2026-10-08   # 期間で絞る
 bun src/cli/chat-log.ts search pm2 --session f0f40b1f   # 1つのセッションの中を探す
 bun src/cli/chat-log.ts show --message 98d7f31b --range 3:10   # メッセージIDで指したメッセージの前3件と後10件を読む
+bun src/cli/chat-log.ts outline f0f40b1f   # 長いセッションの発言と、それぞれへの最後の応答だけを1行ずつ見る
 bun src/cli/chat-log.ts export --message 98d7f31b   # メッセージ1つを Markdown で書き出す
 ```
 
@@ -321,7 +322,7 @@ bun src/cli/chat-log.ts export --message 98d7f31b   # メッセージ1つを Mar
 - 会話は提供元と IDの組で識別する。`show` と `export` で IDが複数の提供元に一致したときは、`--provider claude-code` などで指定する。候補が無い場合は終了コード1、複数の場合は2になる。
 - 出力は短い決まった形のテキスト（`--json` で JSON Lines）。本文は既定で切りつめ、ツールの入出力は1行に要約し、思考は出さない（オプションで出せる）。
 - 抜粋は語ごとに一致した位置の前後で、すべての語の一致を `⟪ ⟫` で囲む（本文の `**` は Markdown の太字）。
-- GUI でコピーしたセッションIDやメッセージIDを AI に渡すと、AI は `chat-log show <セッションID>` や `chat-log show --message <メッセージID>` で読める。メッセージIDがまれに2つのセッションに重なるとき（fork など）は、セッションIDも添える（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
+- GUI でコピーしたセッションIDやメッセージIDを AI に渡すと、AI は `chat-log outline <セッションID>`（流れを短く見る。[ADR 0043](docs/adr/0043-chat-log-outline-of-long-sessions.md)）、`chat-log show <セッションID>`、`chat-log show --message <メッセージID>` で読める。メッセージIDがまれに2つのセッションに重なるとき（fork など）は、セッションIDも添える（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
 - ヘルプ（`chat-log --help`）は、AI のエージェントが読むものとして書いてある（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
 - `chat-log --help` は、どのサブコマンドを使うかを決めるための短い案内である。各サブコマンドのオプションと出力の形は、`chat-log <サブコマンド> --help` で出す（[ADR 0042](docs/adr/0042-split-chat-log-help-by-subcommand.md)）。
 - AI に使わせるときは、作業の指示や `CLAUDE.md` に「過去の経緯は `chat-log --help` を読んで `chat-log` で調べる」と書いておく。
