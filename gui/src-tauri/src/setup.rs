@@ -72,21 +72,27 @@ pub fn export_command(
     path: Option<&str>,
     provider: &str,
     session_id: &str,
+    message_id: Option<&str>,
 ) -> Result<CommandSpec, String> {
     let bun = required(settings, settings::BUN, "bun")?;
     let repo = required(settings, settings::REPO, "the repository")?;
+    let session = [
+        Path::new(repo)
+            .join("src/cli/chat-log.ts")
+            .to_string_lossy()
+            .into_owned(),
+        "export".to_owned(),
+        session_id.to_owned(),
+        "--provider".to_owned(),
+        provider.to_owned(),
+    ];
+    // docs/adr/0040: one message of the session.
+    let message = message_id
+        .map(|id| vec!["--message".to_owned(), id.to_owned()])
+        .unwrap_or_default();
     Ok(CommandSpec {
         program: PathBuf::from(bun),
-        args: vec![
-            Path::new(repo)
-                .join("src/cli/chat-log.ts")
-                .to_string_lossy()
-                .into_owned(),
-            "export".to_owned(),
-            session_id.to_owned(),
-            "--provider".to_owned(),
-            provider.to_owned(),
-        ],
+        args: session.into_iter().chain(message).collect(),
         env: command_env(settings, Path::new(bun), path),
     })
 }
@@ -344,8 +350,14 @@ mod tests {
     // docs/adr/0026
     #[test]
     fn builds_the_export_command() {
-        let spec =
-            export_command(&sample(), Some("/usr/bin"), "claude-code", "aaaaaaaa-1111").unwrap();
+        let spec = export_command(
+            &sample(),
+            Some("/usr/bin"),
+            "claude-code",
+            "aaaaaaaa-1111",
+            None,
+        )
+        .unwrap();
         assert_eq!(spec.program, PathBuf::from("/tools/bin/bun"));
         assert_eq!(
             spec.args,
@@ -365,7 +377,32 @@ mod tests {
             .into_iter()
             .filter(|s| s.key != settings::BUN)
             .collect();
-        assert!(export_command(&no_bun, None, "claude-code", "x").is_err());
+        assert!(export_command(&no_bun, None, "claude-code", "x", None).is_err());
+    }
+
+    // docs/adr/0040: the copy of one message is export --message.
+    #[test]
+    fn adr0040_i8_builds_the_export_command_of_a_message() {
+        let spec = export_command(
+            &sample(),
+            Some("/usr/bin"),
+            "codex",
+            "s-1",
+            Some("m0000001"),
+        )
+        .unwrap();
+        assert_eq!(
+            spec.args,
+            vec![
+                "/repo/src/cli/chat-log.ts",
+                "export",
+                "s-1",
+                "--provider",
+                "codex",
+                "--message",
+                "m0000001"
+            ]
+        );
     }
 
     #[test]

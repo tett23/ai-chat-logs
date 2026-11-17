@@ -280,12 +280,17 @@ bun src/cli/chat-log.ts search 写し --exclude 写して --cwd .   # 語を除�
 bun src/cli/chat-log.ts export f0f40b1f > session.md   # セッションの全文を Markdown で書き出す
 bun src/cli/chat-log.ts show f0f40b1f --provider claude-code --around 563   # その前後の10件を読む
 bun src/cli/chat-log.ts search pm2 --since 2026-10-01 --until 2026-10-08   # 期間で絞る
+bun src/cli/chat-log.ts search pm2 --session f0f40b1f   # 1つのセッションの中を探す
+bun src/cli/chat-log.ts show --message 98d7f31b --range 3:10   # メッセージIDで指したメッセージの前3件と後10件を読む
+bun src/cli/chat-log.ts export --message 98d7f31b   # メッセージ1つを Markdown で書き出す
 ```
 
 - `bin/install` で `~/.local/bin/chat-log` に入る。
 - 会話は提供元と IDの組で識別する。`show` と `export` で IDが複数の提供元に一致したときは、`--provider claude-code` などで指定する。候補が無い場合は終了コード1、複数の場合は2になる。
 - 出力は短い決まった形のテキスト（`--json` で JSON Lines）。本文は既定で切りつめ、ツールの入出力は1行に要約し、思考は出さない（オプションで出せる）。
 - 抜粋は語ごとに一致した位置の前後で、すべての語の一致を `⟪ ⟫` で囲む（本文の `**` は Markdown の太字）。
+- GUI でコピーしたセッションIDやメッセージIDを AI に渡すと、AI は `chat-log show <セッションID>` や `chat-log show --message <メッセージID>` で読める。メッセージIDがまれに2つのセッションに重なるとき（fork など）は、セッションIDも添える（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
+- ヘルプ（`chat-log --help`）は、AI のエージェントが読むものとして書いてある（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
 - AI に使わせるときは、作業の指示や `CLAUDE.md` に「過去の経緯は `chat-log --help` を読んで `chat-log` で調べる」と書いておく。
 - 履歴には秘密の情報が含まれうる。AI に読ませた内容は、その AI の提供元に送られる。
 
@@ -313,6 +318,7 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 - 会話は新しい順に出す（いちばん上が最後のメッセージ。[ADR 0016](docs/adr/0016-show-conversations-newest-first.md)）。100件ずつ読みこみ、下へスクロールすると古いほうを、検索の結果から途中を開いたときは上へスクロールすると新しいほうを読みこむ（[ADR 0014](docs/adr/0014-load-conversations-in-pages.md)）。会話の上に、読みこんだ範囲と総数が出る。番号は時刻の順に付く（`chat-log` と同じ）。
 - 会話の上の「書き出す」で、開いているセッションの全文を Markdown のファイルに書き出せる（中身は `chat-log export` と同じ）。検索の結果から開いた会話では、本文の中の検索の語句が強調される（[ADR 0026](docs/adr/0026-export-sessions-and-highlight-terms.md)）。
+- 会話の上に、タイトル、提供元、セッションID、cwd、期間、件数を出す。「セッションIDをコピー」「セッションをコピー」（中身は `chat-log export` と同じ）と、各メッセージの「IDをコピー」「コピー」で、クリップボードに写せる。左の一覧の各セッションは2行にまとめ、マウスを載せると全体が出る（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
 - 会話の上の「表示」のメニューで、thinking、tool_use、tool_result の行を隠せる。何も出なくなったメッセージは見出しごと隠れる。選んだ状態は次に起動したときも残る（[ADR 0024](docs/adr/0024-gui-conversation-header-and-block-filter.md)）。
 
 ### Codex の表示と設定

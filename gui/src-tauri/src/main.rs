@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use store::{Project, SearchResult, SessionSummary, StoreError};
+use tauri_plugin_clipboard_manager::ClipboardExt;
 
 /// The repository this app was built from: the default of AI_CHAT_LOGS_REPO.
 const REPO_AT_BUILD: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
@@ -546,13 +547,96 @@ fn export_session(
     let env_path = std::env::var("PATH").ok();
     // Copy the settings so that the lock is not held while the export runs.
     let settings = with_loaded(&state, |l| Ok(l.settings.clone()))?;
-    let spec = setup::export_command(&settings, env_path.as_deref(), &provider, &session_id)
+    let spec = setup::export_command(&settings, env_path.as_deref(), &provider, &session_id, None)
         .map_err(settings_error)?;
     export_to(
         &spec,
         settings::value(&settings, settings::REPO),
         Path::new(&path),
     )
+}
+
+/// docs/adr/0040: runs `spec` and hands its whole stdout to `write` (the clipboard) only when it
+/// ends with 0; a command that cannot start is an error, and one that fails returns its exit code
+/// and the tail of its stderr, without writing.
+fn copy_output(
+    spec: &setup::CommandSpec,
+    cwd: Option<&str>,
+    write: impl FnOnce(String) -> Result<(), String>,
+) -> Result<RunResult, StoreError> {
+    let mut command = std::process::Command::new(&spec.program);
+    command.args(&spec.args).envs(spec.env.iter().cloned());
+    if let Some(dir) = cwd {
+        command.current_dir(dir);
+    }
+    let output = command
+        .output()
+        .map_err(|e| settings_error(format!("{}: {e}", spec.program.display())))?;
+    if !output.status.success() {
+        return Ok(RunResult {
+            exit_code: output.status.code(),
+            output: setup::tail(&String::from_utf8_lossy(&output.stderr), 20),
+        });
+    }
+    write(String::from_utf8_lossy(&output.stdout).into_owned()).map_err(settings_error)?;
+    Ok(RunResult {
+        exit_code: output.status.code(),
+        output: String::new(),
+    })
+}
+
+fn write_clipboard(app: &tauri::AppHandle, text: String) -> Result<(), String> {
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
+/// docs/adr/0040: an ID to the clipboard.
+#[tauri::command]
+fn copy_text(app: tauri::AppHandle, text: String) -> CommandResult<()> {
+    write_clipboard(&app, text).map_err(settings_error)
+}
+
+/// docs/adr/0040: `chat-log export` of a session, or of one message of it, to the clipboard.
+fn copy_export(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    provider: &str,
+    session_id: &str,
+    message_id: Option<&str>,
+) -> CommandResult<RunResult> {
+    let env_path = std::env::var("PATH").ok();
+    let settings = with_loaded(state, |l| Ok(l.settings.clone()))?;
+    let spec = setup::export_command(
+        &settings,
+        env_path.as_deref(),
+        provider,
+        session_id,
+        message_id,
+    )
+    .map_err(settings_error)?;
+    copy_output(&spec, settings::value(&settings, settings::REPO), |text| {
+        write_clipboard(app, text)
+    })
+}
+
+#[tauri::command(async)]
+fn copy_session(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    session_id: String,
+) -> CommandResult<RunResult> {
+    copy_export(&app, &state, &provider, &session_id, None)
+}
+
+#[tauri::command(async)]
+fn copy_message(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    provider: String,
+    session_id: String,
+    message_id: String,
+) -> CommandResult<RunResult> {
+    copy_export(&app, &state, &provider, &session_id, Some(&message_id))
 }
 
 #[tauri::command(async)]
@@ -646,6 +730,7 @@ fn scan_claude_ai_exports(state: tauri::State<'_, AppState>) -> CommandResult<Sc
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState {
             loaded: Mutex::new(load()),
             running: AtomicBool::new(false),
@@ -664,10 +749,69 @@ fn main() {
             run_sync,
             import_claude_ai_export,
             scan_claude_ai_exports,
-            export_session
+            export_session,
+            copy_text,
+            copy_session,
+            copy_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running the application");
+}
+
+#[cfg(test)]
+mod copy_tests {
+    use super::*;
+
+    fn sh(script: &str) -> setup::CommandSpec {
+        setup::CommandSpec {
+            program: PathBuf::from("/bin/sh"),
+            args: vec!["-c".into(), script.into()],
+            env: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn adr0040_i8_writes_the_whole_stdout() {
+        let mut written = Vec::new();
+        let result = copy_output(&sh("printf '# a\\n\\nb\\n'"), None, |text| {
+            written.push(text);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(written, vec!["# a\n\nb\n".to_string()]);
+    }
+
+    #[test]
+    fn adr0040_i9_a_failed_command_does_not_write() {
+        let mut writes = 0;
+        let result = copy_output(&sh("echo out; echo bad >&2; exit 1"), None, |_| {
+            writes += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(result.exit_code, Some(1));
+        assert_eq!(result.output, "bad");
+        assert_eq!(writes, 0);
+    }
+
+    #[test]
+    fn adr0040_i9_a_command_that_cannot_start_does_not_write() {
+        let mut writes = 0;
+        let spec = setup::CommandSpec {
+            program: PathBuf::from("/nonexistent/bun"),
+            args: Vec::new(),
+            env: Vec::new(),
+        };
+        assert!(
+            copy_output(&spec, None, |_| {
+                writes += 1;
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(writes, 0);
+    }
 }
 
 #[cfg(test)]
