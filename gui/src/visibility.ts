@@ -32,3 +32,10 @@ export const parseShown = (value: string | null): Shown => {
   if (entries.some(([, v]) => typeof v !== "boolean")) return ALL_SHOWN;
   return { ...ALL_SHOWN, ...Object.fromEntries(entries) };
 };
+
+// docs/adr/0046: the name of the 表示 pulldown; it counts the checkboxes that differ from the defaults.
+export const shownMenuLabel = (shown: Shown): string => {
+  const keys = [...HIDEABLE, "unavailable"] as const;
+  const changed = keys.filter((k) => (shown[k] ?? false) !== (ALL_SHOWN[k] ?? false)).length;
+  return changed === 0 ? "表示" : `表示（${changed} 個を変更）`;
+};

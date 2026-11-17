@@ -351,9 +351,9 @@ bun run tauri build        # アプリをビルドする（src-tauri/target/rele
 - 左にセッションの一覧、上に検索の入力欄、右に会話を出す。会話を開く前の右の欄には、データベースのパスと、ディスクで使っている容量（`-wal` と `-shm` を含む）が出る（[ADR 0025](docs/adr/0025-gui-show-database-size.md)）。プロジェクトの絞り込みで、Claude Code と Codex の作業ディレクトリのほか「claude.ai」「Cowork」を選べる。3文字以上の語は全文検索の索引で引き、3文字未満の語は全件を走査する（遅い）。
 - ツールの入出力などの長いブロックは先頭の 4,000 文字だけを出し、「全文を読み込む」で残りを読む。
 - 会話は新しい順に出す（いちばん上が最後のメッセージ。[ADR 0016](docs/adr/0016-show-conversations-newest-first.md)）。100件ずつ読みこみ、下へスクロールすると古いほうを、検索の結果から途中を開いたときは上へスクロールすると新しいほうを読みこむ（[ADR 0014](docs/adr/0014-load-conversations-in-pages.md)）。会話の上に、読みこんだ範囲と総数が出る。番号は時刻の順に付く（`chat-log` と同じ）。
-- 会話の上の「書き出す」で、開いているセッションの全文を Markdown のファイルに書き出せる（中身は `chat-log export` と同じ）。検索の結果から開いた会話では、本文の中の検索の語句が強調される（[ADR 0026](docs/adr/0026-export-sessions-and-highlight-terms.md)）。
-- 会話の上に、タイトル、提供元、セッションID、cwd、期間、件数を出す。「セッションIDをコピー」「セッションをコピー」（中身は `chat-log export` と同じ）と、各メッセージの「IDをコピー」「コピー」で、クリップボードに写せる。左の一覧の各セッションは2行にまとめ、マウスを載せると全体が出る（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
-- 会話の上の「表示」のメニューで、thinking、tool_use、tool_result の行を隠せる。何も出なくなったメッセージは見出しごと隠れる。選んだ状態は次に起動したときも残る（[ADR 0024](docs/adr/0024-gui-conversation-header-and-block-filter.md)）。
+- 会話の上の「操作 ▾」の「書き出す…」で、開いているセッションの全文を Markdown のファイルに書き出せる（中身は `chat-log export` と同じ）。検索の結果から開いた会話では、本文の中の検索の語句が強調される（[ADR 0026](docs/adr/0026-export-sessions-and-highlight-terms.md)）。
+- 会話の上に、タイトル、提供元、セッションID、cwd、期間、件数を出す。「操作 ▾」の「セッションIDをコピー」「セッションをコピー」（中身は `chat-log export` と同じ）と、各メッセージの「IDをコピー」「コピー」で、クリップボードに写せる。左の一覧の各セッションは2行にまとめ、マウスを載せると全体が出る（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
+- 会話の上の「表示 ▾」で、thinking、tool_use、tool_result の行を隠せる。何も出なくなったメッセージは見出しごと隠れる。選んだ状態は次に起動したときも残る（[ADR 0024](docs/adr/0024-gui-conversation-header-and-block-filter.md)、[ADR 0046](docs/adr/0046-gui-header-pulldown-menus.md)）。
 
 ### Codex の表示と設定
 

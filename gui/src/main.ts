@@ -13,7 +13,7 @@ import { scanMessage } from "./scan.ts";
 import { sessionTooltip, sidebarMeta } from "./session-meta.ts";
 import { formatSize } from "./size.ts";
 import { splitSnippet } from "./snippet.ts";
-import { ALL_SHOWN, HIDEABLE, messageShown, parseShown, type Shown, serializeShown } from "./visibility.ts";
+import { ALL_SHOWN, HIDEABLE, messageShown, parseShown, type Shown, serializeShown, shownMenuLabel } from "./visibility.ts";
 
 const PAGE = 50;
 const SEARCH_DELAY_MS = 300;
@@ -236,6 +236,31 @@ const messageNode = (message: api.Message): HTMLElement => {
   return article;
 };
 
+// docs/adr/0046: a pulldown is a <details>; it closes on a press outside it (heard in the capture phase, so
+// buttons that stop propagation still close it), on Escape, when the other one opens, and when a session opens.
+const PULLDOWN_SUMMARY = "cursor-pointer list-none rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 [&::-webkit-details-marker]:hidden";
+const PULLDOWN_ITEM = "w-full rounded px-2 py-1 text-left text-xs hover:bg-gray-100 disabled:opacity-50";
+const pulldowns: HTMLDetailsElement[] = [];
+const closePulldowns = (except: HTMLDetailsElement | null = null): void =>
+  pulldowns.forEach((d) => { if (d !== except) d.open = false; });
+const pulldown = (summary: HTMLElement, items: readonly HTMLElement[]): HTMLDetailsElement => {
+  const panel = h("div", { class: "absolute right-0 top-full z-30 mt-1 flex min-w-44 flex-col gap-1 rounded border border-gray-300 bg-white p-1.5 text-xs text-gray-700 shadow-lg" }, items);
+  const details = h("details", { class: "relative" }, [summary, panel]);
+  details.addEventListener("toggle", () => { if (details.open) closePulldowns(details); });
+  pulldowns.push(details);
+  return details;
+};
+document.addEventListener("pointerdown", (event) => {
+  pulldowns.forEach((d) => { if (d.open && !d.contains(event.target as Node)) d.open = false; });
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  pulldowns.filter((d) => d.open).forEach((d) => {
+    d.open = false;
+    d.querySelector("summary")?.focus();
+  });
+});
+
 // docs/adr/0024: the 表示 menu. Blocks of an unchecked kind are hidden by a class on the view, and a
 // message left with nothing to show is hidden as a whole; the choice is kept in localStorage.
 const SHOWN_KEY = "ai-chat-logs:shown";
@@ -252,17 +277,17 @@ function applyShown(article: HTMLElement): void {
   const unavailable = (article.dataset.unavailableIndexes ?? "").split(" ").filter(Boolean).map(Number);
   article.hidden = !messageShown(kinds, shown, article.dataset.highlight === "true", unavailable);
 }
+const shownSummary = h("summary", { class: PULLDOWN_SUMMARY });
 const applyShownToView = (): void => {
+  shownSummary.textContent = `${shownMenuLabel(shown)} ▾`; // docs/adr/0046
   HIDEABLE.forEach((kind) => view.classList.toggle(`hide-${kind}`, !shown[kind]));
   view.classList.toggle("hide-unavailable", !shown.unavailable);
   view.querySelectorAll<HTMLElement>("article[data-kinds]").forEach(applyShown);
   refreshStatus();
 };
-const shownMenu = h(
-  "div",
-  { class: "flex items-center gap-3 text-xs text-gray-500" },
+const shownMenu = pulldown(
+  shownSummary,
   [
-    "表示",
     ...HIDEABLE.map((kind) => {
       const box = h("input", { attrs: { type: "checkbox" } });
       box.checked = shown[kind];
@@ -276,7 +301,7 @@ const shownMenu = h(
         applyShownToView();
         fillView();
       });
-      return h("label", { class: "flex items-center gap-1" }, [box, kind]);
+      return h("label", { class: "flex items-center gap-2 px-2 py-1" }, [box, kind]);
     }),
     (() => {
       const box = h("input", { attrs: { type: "checkbox" } });
@@ -287,7 +312,7 @@ const shownMenu = h(
         applyShownToView();
         fillView();
       });
-      return h("label", { class: "flex items-center gap-1" }, [box, "表示できない内容"]);
+      return h("label", { class: "flex items-center gap-2 px-2 py-1" }, [box, "表示できない内容"]);
     })(),
   ],
 );
@@ -320,12 +345,13 @@ const contextBar = h("div", { class: "flex flex-wrap items-center gap-2 text-xs 
 const exportStatus = h("p", { class: "whitespace-pre-wrap break-all text-xs text-gray-500 empty:hidden" });
 const exportButton = h(
   "button",
-  { class: "rounded border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-50", attrs: { disabled: "" } },
-  ["書き出す"],
+  { class: PULLDOWN_ITEM, attrs: { type: "button", disabled: "" } },
+  ["書き出す…"],
 );
 exportButton.addEventListener("click", () => {
   const sessionId = conversation.sessionId;
   if (!sessionId) return;
+  closePulldowns(); // docs/adr/0046
   void (async () => {
     const path = await save({ defaultPath: exportFileName(conversation.title, sessionId), filters: [{ name: "Markdown", extensions: ["md"] }] });
     if (path === null) return;
@@ -353,13 +379,14 @@ const copyButton = (label: string, copy: () => Promise<api.RunResult | null>, ex
     void copy()
       .then((result) => {
         if (result !== null && result.exit_code !== 0) {
+          closePulldowns(); // docs/adr/0046: the failure shows under the panel
           exportStatus.textContent = `コピーに失敗しました（終了コード ${result.exit_code ?? "なし"}）\n${result.output}`;
           return;
         }
         button.textContent = "コピーしました";
         setTimeout(() => { button.textContent = label; }, 2000);
       })
-      .catch((e) => { exportStatus.textContent = `コピーに失敗しました: ${failureText(e)}`; })
+      .catch((e) => { closePulldowns(); exportStatus.textContent = `コピーに失敗しました: ${failureText(e)}`; })
       .finally(() => { button.disabled = false; });
   });
   return button;
@@ -373,17 +400,23 @@ const messageCopyButtons = (uuid: string): HTMLElement[] => {
   ];
 };
 const copySessionIdButton = copyButton("セッションIDをコピー", async () =>
-  conversation.sessionId ? api.copyText(conversation.sessionId) : null, "px-2 py-0.5");
+  conversation.sessionId ? api.copyText(conversation.sessionId) : null);
+copySessionIdButton.className = PULLDOWN_ITEM;
 copySessionIdButton.disabled = true;
 const copySessionButton = copyButton("セッションをコピー", async () =>
-  conversation.sessionId ? api.copySession(conversation.provider as string, conversation.sessionId) : null, "px-2 py-0.5");
+  conversation.sessionId ? api.copySession(conversation.provider as string, conversation.sessionId) : null);
+copySessionButton.className = PULLDOWN_ITEM;
 copySessionButton.disabled = true;
 
 const statusBox = h("div", { class: "sticky top-0 z-10 -mt-4 bg-white/90 py-1" }, [
   h("div", { class: "flex items-center justify-between gap-4 whitespace-nowrap" }, [
     h("span", { class: "text-xs font-medium text-gray-600", attrs: { id: "conversation-provider" } }),
     statusText,
-    h("div", { class: "flex items-center gap-3" }, [copySessionIdButton, copySessionButton, exportButton, shownMenu]),
+    // docs/adr/0046
+    h("div", { class: "flex items-center gap-2" }, [
+      pulldown(h("summary", { class: PULLDOWN_SUMMARY }, ["操作 ▾"]), [copySessionIdButton, copySessionButton, exportButton]),
+      shownMenu,
+    ]),
   ]),
   contextBar,
   exportStatus,
@@ -495,6 +528,7 @@ const openSession = async (
   terms: readonly string[],
 ): Promise<void> => {
   state.selected = { provider, sessionId };
+  closePulldowns(); // docs/adr/0046
   conversation.generation += 1;
   conversation.provider = provider;
   conversation.sessionId = sessionId;
