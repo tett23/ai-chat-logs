@@ -1,6 +1,6 @@
 # ADR 0044: chat-log outline の出力を短くする
 
-Status: proposed
+Status: accepted-pending
 
 ## 文脈
 

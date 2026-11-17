@@ -1,6 +1,6 @@
 # ADR 0043: chat-log で長いセッションの流れを短く出す
 
-Status: accepted
+Status: superseded [{"part":"実装すること 1 のコマンドの形、区切りの数え方、--max-chars の既定、「続き」の行","by":["docs/adr/0044-shorter-chat-log-outline.md"]},{"part":"不変条件 I6","by":["docs/adr/0044-shorter-chat-log-outline.md"]},{"part":"不変条件 I7","by":["docs/adr/0044-shorter-chat-log-outline.md"]},{"part":"不変条件 I10 の outline のヘルプの既定値","by":["docs/adr/0044-shorter-chat-log-outline.md"]}]
 
 ## 文脈
 
