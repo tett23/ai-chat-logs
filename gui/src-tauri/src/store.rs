@@ -47,16 +47,21 @@ impl From<rusqlite::Error> for StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// docs/adr/0045: a read-write connection that never creates the file and refuses writes (query_only),
+/// so that a WAL database opens even when its -wal file is gone.
+pub fn open_query_only(path: &Path, extra: OpenFlags) -> rusqlite::Result<Connection> {
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE | extra)?;
+    conn.execute_batch("PRAGMA query_only = ON;")?;
+    Ok(conn)
+}
+
 pub fn open_read_only(path: &Path) -> Result<Connection> {
     if !path.is_file() {
         return Err(StoreError::NotFound {
             path: path.display().to_string(),
         });
     }
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let conn = open_query_only(path, OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if found < REQUIRED_SCHEMA_VERSION {
@@ -626,6 +631,30 @@ pub fn scratch_path(name: &str) -> PathBuf {
     ))
 }
 
+/// docs/adr/0045: turns a database into WAL mode, closes it, and leaves its WAL files as in `missing`
+/// ("both", "wal" or "shm" missing). An empty file stands in for the one that remains.
+#[cfg(test)]
+pub fn with_wal_files_missing(path: &Path, missing: &str) {
+    {
+        let conn = Connection::open(path).unwrap();
+        let mode: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mode, "wal");
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+            .unwrap();
+    }
+    let side = |suffix: &str| PathBuf::from(format!("{}{suffix}", path.display()));
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(side(suffix));
+    }
+    match missing {
+        "wal" => std::fs::write(side("-shm"), b"").unwrap(),
+        "shm" => std::fs::write(side("-wal"), b"").unwrap(),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,7 +1118,7 @@ mod tests {
     }
 
     #[test]
-    fn reports_a_missing_database() {
+    fn adr0045_i7_reports_a_missing_database() {
         let path = scratch_path("missing");
         assert_eq!(
             open_read_only(&path).err(),
@@ -1097,6 +1126,25 @@ mod tests {
                 path: path.display().to_string()
             })
         );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn adr0045_i4_open_read_only_without_wal_files() {
+        for missing in ["both", "wal", "shm"] {
+            let path = scratch_path("wal");
+            std::fs::copy(sample(), &path).unwrap();
+            with_wal_files_missing(&path, missing);
+            let conn = open_read_only(&path).unwrap_or_else(|e| panic!("{missing}: {e:?}"));
+            let n: i64 = conn
+                .query_row("SELECT count(*) FROM session_summaries", [], |r| r.get(0))
+                .unwrap();
+            assert!(n > 0, "{missing}");
+            assert!(
+                conn.execute("DELETE FROM session_summaries", []).is_err(),
+                "{missing}"
+            );
+        }
     }
 
     #[test]
