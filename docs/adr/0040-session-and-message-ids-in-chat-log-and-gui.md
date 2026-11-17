@@ -1,6 +1,6 @@
 # ADR 0040: chat-log と GUI でのセッションIDとメッセージIDの扱い
 
-Status: superseded [{"part":"テスト設計 10","by":["docs/adr/0042-split-chat-log-help-by-subcommand.md"]}]
+Status: superseded [{"part":"テスト設計 10","by":["docs/adr/0042-split-chat-log-help-by-subcommand.md"]},{"part":"5. GUI：IDとセッションとメッセージのコピー: 見出しのボタンの置き場所","by":["docs/adr/0046-gui-header-pulldown-menus.md"]},{"part":"6. GUI：会話の欄の上にメタデータを出す: 見出しの1段目の並び","by":["docs/adr/0046-gui-header-pulldown-menus.md"]}]
 
 ## 文脈
 

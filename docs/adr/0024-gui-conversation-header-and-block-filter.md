@@ -1,6 +1,6 @@
 # ADR 0024: GUI の会話の欄の範囲の表示の余白と、ブロックの種類を隠すメニュー
 
-Status: accepted
+Status: superseded [{"part":"2. ブロックの種類を隠すメニュー: 置き場所と並べ方","by":["docs/adr/0046-gui-header-pulldown-menus.md"]}]
 
 ## 文脈
 
