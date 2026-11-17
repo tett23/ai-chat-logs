@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { contextText, flat, hitLines, jsonLines, messageJson, messagesText, plainText, sessionLine } from "../chat-log/format.ts";
 import { HELP, MAIN_HELP, subcommandHelp } from "../chat-log/help.ts";
 import { messageSectionMarkdown, sessionMarkdown } from "../chat-log/markdown.ts";
+import { outlineJson, outlineLines, promptCount, turns } from "../chat-log/outline.ts";
 import { planSearch } from "../chat-log/search.ts";
 import {
   exitError,
@@ -73,6 +74,8 @@ const count = (value: string | undefined, name: string, fallback: number): numbe
 
 const EXPORT_REJECTS = ["cwd", "since", "until", "limit", "offset", "max-chars", "json"] as const;
 // docs/adr/0040
+// docs/adr/0043
+const OUTLINE_REJECTS = ["around", "message", "range", "thinking", "tools", "cwd", "since", "until", "all", "messages", "session", "exclude"] as const;
 const EXPORT_MESSAGE_REJECTS = [...EXPORT_REJECTS, "range", "around", "thinking", "tools"] as const;
 const SHOW_MESSAGE_REJECTS = ["around", "limit", "offset", "since", "until", "cwd"] as const;
 const SEARCH_SESSION_REJECTS = ["cwd", "since", "until"] as const;
@@ -182,6 +185,20 @@ const main = (argv: string[]): string => {
       if (v.json) return jsonLines(messages.map((m) => messageJson(m, maxChars)));
       const center = v.around !== undefined ? count(v.around, "around", 1) : null;
       return messagesText(messages, { thinking: v.thinking, tools: v.tools, maxChars }, { from, to, total, center, previous: center !== null });
+    }
+    // docs/adr/0043: the prompts and the last reply of each turn.
+    case "outline": {
+      rejectWith(v, OUTLINE_REJECTS, "outline");
+      const id = sessionOf(rest[0] ?? usage("outline にはセッションIDを指定する"));
+      const page = { offset, limit: count(v.limit, "limit", 100), maxChars: count(v["max-chars"], "max-chars", 200) };
+      const total = messageCount(db, id.provider, id.session_id);
+      const all = turns(sessionMessages(db, id.provider, id.session_id, 1, total));
+      if (v.json) return jsonLines(outlineJson(all, page));
+      const title = sessionSummary(db, id.provider, id.session_id)?.title;
+      const head = `# ${id.provider} ${id.session_id} ${title ? flat(title) : ""}（${total} 件、発言 ${promptCount(all)} 件）`;
+      const next = page.offset + page.limit;
+      const more = next < all.length ? [`（続き：chat-log outline ${id.session_id} --offset ${next}${v.provider !== undefined ? ` --provider ${id.provider}` : ""}）`] : [];
+      return `${[head, ...outlineLines(all, page), ...more].join("\n")}\n`;
     }
     // docs/adr/0026: the whole session as Markdown.
     case "export": {
