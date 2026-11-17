@@ -302,7 +302,7 @@ Codex の古いコピー（[ADR 0041](docs/adr/0041-append-codex-snapshots-inste
 
 ### AI に履歴を引かせる（chat-log）
 
-`chat-log` は、AI のエージェント（Claude Code など）が過去の経緯や決定を思い出して文脈を戻すための、読み取り専用の CLI（[ADR 0011](docs/adr/0011-cli-for-ai-agents.md)、[ADR 0013](docs/adr/0013-chat-log-output-corrections.md)、[ADR 0018](docs/adr/0018-chat-log-snippets-until-and-help.md)）。使い方は `chat-log --help` に全部書いてあり、AI はヘルプだけで使える。
+`chat-log` は、AI のエージェント（Claude Code など）が過去の経緯や決定を思い出して文脈を戻すための、読み取り専用の CLI（[ADR 0011](docs/adr/0011-cli-for-ai-agents.md)、[ADR 0013](docs/adr/0013-chat-log-output-corrections.md)、[ADR 0018](docs/adr/0018-chat-log-snippets-until-and-help.md)）。使い方は `chat-log --help` と `chat-log <サブコマンド> --help` に書いてあり、AI はヘルプだけで使える。
 
 ```sh
 bun src/cli/chat-log.ts context                     # いまのプロジェクトの最近のセッションと最後のやりとり
@@ -323,6 +323,7 @@ bun src/cli/chat-log.ts export --message 98d7f31b   # メッセージ1つを Mar
 - 抜粋は語ごとに一致した位置の前後で、すべての語の一致を `⟪ ⟫` で囲む（本文の `**` は Markdown の太字）。
 - GUI でコピーしたセッションIDやメッセージIDを AI に渡すと、AI は `chat-log show <セッションID>` や `chat-log show --message <メッセージID>` で読める。メッセージIDがまれに2つのセッションに重なるとき（fork など）は、セッションIDも添える（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
 - ヘルプ（`chat-log --help`）は、AI のエージェントが読むものとして書いてある（[ADR 0040](docs/adr/0040-session-and-message-ids-in-chat-log-and-gui.md)）。
+- `chat-log --help` は、どのサブコマンドを使うかを決めるための短い案内である。各サブコマンドのオプションと出力の形は、`chat-log <サブコマンド> --help` で出す（[ADR 0042](docs/adr/0042-split-chat-log-help-by-subcommand.md)）。
 - AI に使わせるときは、作業の指示や `CLAUDE.md` に「過去の経緯は `chat-log --help` を読んで `chat-log` で調べる」と書いておく。
 - 履歴には秘密の情報が含まれうる。AI に読ませた内容は、その AI の提供元に送られる。
 

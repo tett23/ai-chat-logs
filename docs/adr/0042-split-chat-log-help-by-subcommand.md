@@ -1,6 +1,6 @@
 # ADR 0042: chat-log のヘルプを全体とサブコマンドに分ける
 
-Status: accepted-pending
+Status: accepted
 
 ## 文脈
 

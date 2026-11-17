@@ -1,6 +1,6 @@
 // docs/adr/0011: help written so that an AI agent can use chat-log from it alone.
 
-const COMMON = `共通のオプション:
+export const COMMON = `共通のオプション:
   --provider <名前>     提供元で絞る（claude-code、claude-cowork、claude-ai、codex）
   --cwd <ディレクトリ>   セッションの cwd が、そのディレクトリか、その下のものに絞る（相対パスは絶対パスにする）
                         既定で絞るのは context だけ。sessions、search、show は絞らないので、
@@ -121,6 +121,30 @@ chat-log export [<セッションID>] --message <メッセージID>
 
 export const HELP: Record<string, string> = { context: CONTEXT, sessions: SESSIONS, search: SEARCH, show: SHOW, export: EXPORT };
 
+// docs/adr/0042: the terms are shown in the overview and in every subcommand's help.
+export const TERMS = `用語:
+  写し: fork したセッションなどで、同じ提供元・セッションID・uuid のレコードが複数のファイルにあるもの。
+        パス、generation、行番号の順で最初の1つだけを使い、ほかは会話・検索・件数から除く。
+        動詞の「写す」と同じ形なので、検索ではほかの語を足すか --exclude 写して などで絞るとよい。
+  メッセージの番号: セッションの中の通し番号（1始まり、時刻の順。写しは数えない）。
+  セッションID: セッションの ID（Claude は UUID、Codex はスレッドの ID）。sessions --json などの session_id。
+  メッセージID: メッセージの ID（Claude は UUID、Codex は64文字の16進）。search --json と show --json の uuid。
+                Codex の「元ID」（original_id）とは別の値。`;
+
+// docs/adr/0042: one line per subcommand in the overview; the details are in each subcommand's help.
+const SUMMARY: Record<string, string> = {
+  context: "いまのプロジェクトの最近のセッションと、最後のやりとりを出す。",
+  sessions: "セッションの一覧を新しい順に出す。",
+  search: "本文を全文検索し、ヒットを <ID>#<番号> で出す。",
+  show: "1つのセッションのメッセージを順に出す。メッセージIDで前後も出せる。",
+  export: "1つのセッションか1つのメッセージを Markdown の全文で出す。",
+};
+const width = Math.max(...Object.keys(HELP).map((k) => k.length));
+const LIST = Object.keys(HELP).map((k) => `  ${k}  ${" ".repeat(width - k.length)}${SUMMARY[k]}`).join("\n");
+
+// docs/adr/0042: a subcommand's help is its section, the common options and the terms.
+export const subcommandHelp = (name: string): string => `${HELP[name]}\n\n${COMMON}\n\n${TERMS}\n`;
+
 export const MAIN_HELP = `chat-log: Claude と Codex の会話の履歴を引く、読み取り専用の CLI。
 AI のエージェントが、過去の経緯や決定を思い出して文脈を戻すために使う。
 
@@ -137,27 +161,10 @@ AI のエージェントが、過去の経緯や決定を思い出して文脈�
   本文で見つからないときは、search に --tools を付けてツールの入出力も探す
 
 サブコマンド:
+${LIST}
+各サブコマンドのオプション、出力の形、既定値は chat-log <サブコマンド> --help で出す。
 
-${CONTEXT}
-
-${SESSIONS}
-
-${SEARCH}
-
-${SHOW}
-
-${EXPORT}
-
-${COMMON}
-
-用語:
-  写し: fork したセッションなどで、同じ提供元・セッションID・uuid のレコードが複数のファイルにあるもの。
-        パス、generation、行番号の順で最初の1つだけを使い、ほかは会話・検索・件数から除く。
-        動詞の「写す」と同じ形なので、検索ではほかの語を足すか --exclude 写して などで絞るとよい。
-  メッセージの番号: セッションの中の通し番号（1始まり、時刻の順。写しは数えない）。
-  セッションID: セッションの ID（Claude は UUID、Codex はスレッドの ID）。sessions --json などの session_id。
-  メッセージID: メッセージの ID（Claude は UUID、Codex は64文字の16進）。search --json と show --json の uuid。
-                Codex の「元ID」（original_id）とは別の値。
+${TERMS}
 
 終了コード:
   0  成功（結果が0件のときも含む）
