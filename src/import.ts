@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { detectChange } from "./change.ts";
 import { rebuildCodexPresentation } from "./codex-presentation.ts";
+import { publishedSize } from "./codex-store.ts";
 import { extractFields } from "./extract.ts";
 import { isFileKind, isLineKind, type LineKind } from "./kinds.ts";
 import { splitCompleteLines } from "./lines.ts";
@@ -92,11 +93,17 @@ function* readChunks(path: string, start: number, size: number, chunkBytes: numb
   }
 }
 
+// docs/adr/0041: a Codex store file is imported only up to the range its manifest-v2.json publishes.
+// The size is taken before the manifest is read, so that it never exceeds the published range.
+const importedSize = (kind: LineKind, path: string, size: number): number =>
+  kind === "codex/rollout" || kind === "codex/conversation" ? publishedSize(path, size) : size;
+
 // docs/adr/0001: import complete lines appended since the last run; a rewritten file starts a new generation.
 const importLines = (db: Database, kind: LineKind, path: string, now: string, chunkBytes: number): number =>
   db
     .transaction(() => {
-      const { size, mtimeMs } = statSync(path);
+      const stat = statSync(path);
+      const size = importedSize(kind, path, stat.size), mtimeMs = stat.mtimeMs;
       const stored = latestSource(db, path) ?? insertSource(db, kind, path, 0, now);
       const change = detectChange({
         size,

@@ -72,17 +72,18 @@ describe("Codex conversion", () => {
 });
 
 describe("Codex snapshot storage", () => {
-  test("P1 P2 P6 publishes a complete private snapshot and reuses identical bytes", () => {
+  test("ADR 0041 I1, I4, I13: publishes a complete private store with manifest-v2.json and reuses identical bytes", () => {
     const root = tempDir(), store = join(root, "store"), source = writeFile(join(root, "codex/sessions/2026/11/11/one.jsonl"), jsonl(meta(), response("m1", "hi")));
     const first = convertCodexLogs(join(root, "codex"), store);
     expect(first.status).toBe(0);
     expect(first.published).toBe(1);
     const directory = first.directories[0] as string;
-    expect(readdirSync(directory).sort()).toEqual(["manifest-v1.json", "messages-v1.jsonl", "rollout.jsonl"]);
+    expect(readdirSync(directory).sort()).toEqual(["manifest-v2.json", "messages-v1.jsonl", "rollout.jsonl"]);
     expect(readFileSync(join(directory, "rollout.jsonl"), "utf8")).toBe(readFileSync(source, "utf8"));
     expect(directory.endsWith(createHash("sha256").update(readFileSync(source)).digest("hex"))).toBe(true);
-    const manifest = JSON.parse(readFileSync(join(directory, "manifest-v1.json"), "utf8"));
-    expect(manifest).toMatchObject({ converterVersion: 1, sessions: 1, messageLines: 1, warnings: 0, status: 0 });
+    const manifest = JSON.parse(readFileSync(join(directory, "manifest-v2.json"), "utf8"));
+    expect(manifest).toMatchObject({ converterVersion: 1, sourcePath: source, rolloutBytes: statSync(source).size, rolloutLines: 2,
+      sessions: 1, messageLines: 1, lastSourceOrder: 2, warnings: 0, status: 0 });
     expect(statSync(directory).mode & 0o777).toBe(0o700);
     expect(statSync(join(directory, "rollout.jsonl")).mode & 0o777).toBe(0o600);
     expect(convertCodexLogs(join(root, "codex"), store).published).toBe(0);
@@ -103,17 +104,17 @@ describe("Codex snapshot storage", () => {
       .toBe(`${JSON.stringify(meta())}\n`);
   });
 
-  test("P1 P2 creates a new prefix snapshot when a source grows", () => {
+  test("ADR 0041 I1: a grown source is appended to the same store, never with the incomplete tail", () => {
     const root = tempDir(), store = join(root, "store"), codex = join(root, "codex");
     const source = writeFile(join(codex, "sessions/one.jsonl"), `${JSON.stringify(meta())}\n${JSON.stringify(response("m1", "first"))}\n{partial`);
     const first = convertCodexLogs(codex, store);
     expect(first.published).toBe(1);
+    expect(readFileSync(join(first.directories[0] as string, "rollout.jsonl"), "utf8")).not.toContain("partial");
     appendFileSync(source, `-fixed}\n${JSON.stringify(response("m2", "second"))}\n`);
     const second = convertCodexLogs(codex, store);
     expect(second.published).toBe(1);
-    expect(second.directories[0]).not.toBe(first.directories[0]);
-    expect(readFileSync(join(first.directories[0] as string, "rollout.jsonl"), "utf8")).not.toContain("partial");
-    expect(readFileSync(join(second.directories[0] as string, "rollout.jsonl"), "utf8")).toContain("second");
+    expect(second.directories[0]).toBe(first.directories[0]);
+    expect(readFileSync(join(second.directories[0] as string, "rollout.jsonl"), "utf8")).toBe(readFileSync(source, "utf8"));
     expect(convertCodexLogs(codex, store).published).toBe(0);
   });
 
@@ -136,14 +137,15 @@ describe("Codex snapshot storage", () => {
   });
 
   test("P6 each staging write failure leaves no published or partial directory", () => {
-    for (const step of ["rollout.jsonl", "messages-v1.jsonl", "manifest-v1.json"]) {
+    for (const step of ["rollout.jsonl", "messages-v1.jsonl", "manifest-v2.json"]) {
       const root = tempDir(), codex = join(root, "codex"), store = join(root, "store");
       writeFile(join(codex, "sessions/one.jsonl"), jsonl(meta(), response("m1", "same")));
       const result = convertCodexLogs(codex, store, (name) => { if (name === step) throw new Error("injected write failure"); });
       expect(result.status).toBe(1);
       expect(result.published).toBe(0);
       expect(listCodexSources(store)).toEqual([]);
-      expect(readdirSync(store)).toEqual([]);
+      // docs/adr/0041: only the lock remains.
+      expect(readdirSync(store)).toEqual([".lock.sqlite"]);
     }
   });
 

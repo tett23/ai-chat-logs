@@ -60,7 +60,7 @@ claude.ai（Web とデスクトップアプリのチャット）の会話は手�
 bin/install
 ```
 
-- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log`（それぞれ 70MB ほど）、`codex-log-convert`、`codex-log-sources` と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
+- 入るもの：`claude-log-sources`、`chat-log-import`、`claude-ai-export-convert`、`claude-ai-export-scan`、`chat-log`（それぞれ 70MB ほど）、`codex-log-convert`、`codex-log-sources`、`codex-store-dedupe` と、それらで取り込む `ai-chat-logs-sync`。`bun` が無い環境でも動く。
 - リポジトリの場所を埋めこむ。`.env` は、埋めこんだリポジトリのものを読む。実行したディレクトリの `.env` は読まない。
 - pm2 の定期実行と GUI の取り込みは、これまでどおりリポジトリの `bin/sync` を使う。インストールしたコマンドには依存しない。
 
@@ -116,11 +116,16 @@ pm2 や `bun` の場所が変わると、launchd に書き込まれた PATH と�
 Codex の `~/.codex/sessions` と `~/.codex/archived_sessions` 以下の JSONL を、既存の `bin/sync` と定期取り込みで保存する（[ADR 0034](docs/adr/0034-import-codex-rollouts.md)）。
 読み込み元は `AI_CHAT_LOGS_CODEX_DIR`、保存先は `AI_CHAT_LOGS_CODEX_STORE` で変えられる。
 
-元ログの完成した行までを、その完成した範囲の SHA-256 を名前にしたディレクトリへコピーする。
-同じディレクトリに、閲覧用の `messages-v1.jsonl` と処理結果の `manifest-v1.json` を置く。
+元ログの完成した行までを、最初に保存したときの内容の SHA-256 を名前にしたディレクトリへコピーする。
+同じディレクトリに、閲覧用の `messages-v1.jsonl` と処理結果の `manifest-v2.json` を置く。
 元ログは変更しない。
 同じ入力を再取り込みしても、会話の写しは増えない。
-ログが伸びた場合は新しいコピーを残すため、長い会話では保存容量が増える。
+ログが伸びた場合は、伸びた行だけを同じディレクトリに追記する（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+元ログが書きかえられた（先頭が変わった）場合だけ、新しいディレクトリに全体をコピーする。
+保存と追記は、保存先の `.lock.sqlite` のロックを取って1つずつ行う。
+
+[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版は、ログが伸びるたびに全体の新しいコピーを残していた。
+そのコピーと、そこから取り込んだ行を除くには、下の「Codex の古いコピーを除く」の手順で `codex-store-dedupe` を一度だけ実行する。
 
 Codex は全提供元の収集に加え、毎時30分にも収集する（[ADR 0036](docs/adr/0036-codex-hourly-collection.md)）。すぐに収集するには引数なしで `bin/sync-codex`（インストール版は `ai-chat-logs-codex-sync`）を実行する。スリープ中や収集失敗時は次の成功まで保存が遅れる。
 
@@ -140,6 +145,30 @@ codex-log-sources | chat-log-import
 
 単独の Codex 列挙に `--mark-missing` を付けると、Claude の入力を見つからないものとして記録するため、付けない。
 全提供元をまとめて処理するときは `bin/sync` を使う。
+
+### Codex の古いコピーを除く
+
+[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残した、同じ元ログの古いコピーを除く（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
+元ログごとに最も大きいコピーを残し、ほかのコピーは、その中身と取り込んだ行が残すコピーにあると確かめたものだけを消す。
+消さないコピーは、理由を出す。
+一度だけ、次の順に実行する。インストールしていなければ、`codex-store-dedupe` の代わりに `bun src/cli/codex-store-dedupe.ts` を使う。
+
+```sh
+# 1. 取り込みを止める
+pm2 stop ai-chat-logs-sync ai-chat-logs-codex-sync
+# 2. 消す予定を確かめる（何も変えない）
+codex-store-dedupe --dry-run
+# 3. 実行する
+codex-store-dedupe
+# 4. データベースを縮める
+sqlite3 ~/.local/share/ai-chat-logs/logs.sqlite VACUUM
+# 5. 取り込みを再開する
+pm2 start ai-chat-logs-sync ai-chat-logs-codex-sync
+```
+
+- 途中で止まっても、もう一度実行すれば続きから終わる。
+- 圧縮の直前の取り込みは止められないが、保存先のロックで重ならない。
+- 実行の前に、データベースと保存用ディレクトリのバックアップを取っておくとよい。
 
 ## コンテキスト圧縮の直前に取り込む
 
@@ -267,6 +296,8 @@ pm2 start ai-chat-logs-sync
 - `VACUUM` は、データベースと同じくらいの空き容量を一時的に使う。
 - 2026-11-08 の手元のデータベース（7.78 GB、84.5 万行）では、移行の変換が 38 秒、その後の `VACUUM INTO` が 10 秒かかり、5.33 GB になった（`records` が 5,767 MB から 2,359 MB に、`payloads` が 1,156 MB）。
 - GUI は読み取り専用で開くので、`VACUUM` の間は開いていてもよいが、待たされることがある。
+
+Codex の古いコピー（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md) より前の版が残したもの）を除いてから縮めるときは、「Codex の古いコピーを除く」の手順で、取り込みを止める、`codex-store-dedupe --dry-run`、`codex-store-dedupe`、`VACUUM`、取り込みを再開する、の順に実行する（[ADR 0041](docs/adr/0041-append-codex-snapshots-instead-of-copying.md)）。
 
 ### AI に履歴を引かせる（chat-log）
 

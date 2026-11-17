@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { isolatedEnv, jsonl, repoRoot, tempDir, writeFile } from "./helpers.ts";
 
 // docs/adr/0008
-const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-precompact", "ai-chat-logs-sync", "ai-chat-logs-codex-sync"];
+const NAMES = ["claude-log-sources", "codex-log-convert", "codex-log-sources", "codex-store-dedupe", "chat-log-import", "claude-ai-export-convert", "claude-ai-export-scan", "chat-log", "ai-chat-logs-precompact", "ai-chat-logs-sync", "ai-chat-logs-codex-sync"];
 const prefix = join(tempDir(), "bin");
 const builtRepo = tempDir();
 const install = () =>

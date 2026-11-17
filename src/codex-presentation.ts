@@ -90,9 +90,20 @@ const encryptedText = (item: Obj | null): string => item?.type === "agent_messag
 
 const sourceHash = (path: string): string | null => /(?:^|[/\\])([0-9a-f]{64})[/\\]rollout\.jsonl$/.exec(path)?.[1] ?? null;
 
+// The session ID of a first rollout line. SQL reads it without restoring payloads (docs/adr/0041:
+// codex-store-dedupe rebuilds per original file); an ID taken out as a payload is restored.
+const firstSessionId = (row: { sql_id: string | null; raw: string; payload_state: number | null }, restore: ReturnType<typeof restoredRaw>): string | null => {
+  if (row.sql_id === null || !row.sql_id.startsWith("\u0000ai-chat-logs-payload:")) return row.sql_id;
+  const first = parse(restore(row.raw, row.payload_state));
+  return first?.type === "session_meta" ? str(obj(first.payload)?.id) : null;
+};
+
 const snapshots = (db: Database, restore: ReturnType<typeof restoredRaw>): Map<string, Snapshot[]> => {
-  const sourceRows = db.query<{ id: number; path: string; consumed_bytes: number; raw: string | null; payload_state: number | null; max_rowid: number }, []>(
+  const sourceRows = db.query<{ id: number; path: string; consumed_bytes: number; raw: string | null; payload_state: number | null; sql_id: string | null; max_rowid: number }, []>(
     `SELECT s.id, s.path, s.consumed_bytes, first.raw, first.payload_state,
+            CASE WHEN json_valid(first.raw) AND json_type(first.raw) = 'object' AND first.raw ->> '$.type' = 'session_meta'
+                      AND json_type(first.raw, '$.payload') = 'object' AND json_type(first.raw, '$.payload.id') = 'text'
+                 THEN first.raw ->> '$.payload.id' END sql_id,
             COALESCE((SELECT max(rowid) FROM records WHERE source_id=s.id), 0) max_rowid
      FROM sources s LEFT JOIN records first ON first.source_id=s.id AND first.line_no=1
      WHERE s.kind='codex/rollout'`,
@@ -101,8 +112,7 @@ const snapshots = (db: Database, restore: ReturnType<typeof restoredRaw>): Map<s
   for (const row of sourceRows) {
     const hash = sourceHash(row.path);
     if (hash === null || row.raw === null) continue;
-    const first = parse(restore(row.raw, row.payload_state));
-    const sessionId = first?.type === "session_meta" ? str(obj(first.payload)?.id) : null;
+    const sessionId = firstSessionId({ sql_id: row.sql_id, raw: row.raw, payload_state: row.payload_state }, restore);
     if (sessionId === null || sessionId === "") continue;
     const list = bySession.get(sessionId) ?? [];
     list.push({ sourceId: row.id, sessionId, hash, bytes: row.consumed_bytes, maxRowid: row.max_rowid });
@@ -125,7 +135,8 @@ const comparableContent = (row: Obj | null): string | null => {
 };
 
 export type PresentationError = { path: string; message: string };
-export const rebuildCodexPresentation = (db: Database): PresentationError[] => {
+// `only`: rebuild these sessions alone (docs/adr/0041 codex-store-dedupe); every session when omitted.
+export const rebuildCodexPresentation = (db: Database, only?: ReadonlySet<string>): PresentationError[] => {
   // Importers can also be used with a database pinned to an older schema in migration tests.
   if ((db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0) < 8) return [];
   const restore = restoredRaw(db);
@@ -136,7 +147,7 @@ export const rebuildCodexPresentation = (db: Database): PresentationError[] => {
      WHERE s.kind='codex/conversation' AND r.session_id IS NOT NULL GROUP BY r.session_id`,
   ).all();
   const byConversation = new Map(conversationHeads.map((row) => [row.session_id, row.max_rowid]));
-  const sessions = [...new Set([...bySession.keys(), ...byConversation.keys()])].sort();
+  const sessions = [...new Set([...bySession.keys(), ...byConversation.keys()])].filter((id) => only === undefined || only.has(id)).sort();
   const errors: PresentationError[] = [];
   const existing = db.query<Existing, [string]>(
     "SELECT snapshot_sha256, rule_version, source_record_max_rowid FROM codex_session_presentation WHERE session_id=?",
